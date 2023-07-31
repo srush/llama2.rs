@@ -174,7 +174,9 @@ impl<'a> TransformerWeights<'a> {
         } else {
             ret.token_embedding_table
         };
+        assert_eq!(ptr.total, f.len());
         ret
+
     }
 }
 
@@ -267,6 +269,7 @@ fn accum(a: &mut [f32], b: &[f32]) {
 }
 
 fn rmsnorm(o: &mut [f32], xo: Option<&[f32]>, weight: &[f32], size: usize) {
+    assert_eq!(size, o.len());
     // calculate sum of squares
     let mut ss: f32 = 0.0;
     for i in 0..size {
@@ -302,6 +305,7 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     assert_eq!(d, xout.len());
+    assert_eq!(n, x.len());
     xout.par_iter_mut().enumerate().for_each(|(i, v)| {
         let mut val = 0.0;
         for j in 0..n {
@@ -309,6 +313,15 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
         }
         *v = val;
     })
+}
+
+fn dot(q: &[f32], k: &[f32]) -> f32 {
+    assert_eq!(q.len(), k.len());
+    q
+    .iter()
+    .zip(k.iter())
+    .map(|(&q_i, &k_i)| q_i * k_i)
+    .sum::<f32>()
 }
 
 fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &TransformerWeights) {
@@ -364,28 +377,26 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
         value_cache_row.copy_from_slice(&s.v);
 
         // multihead attention. iterate over all heads
-        // This part requires ensuring that there is safety in parallel mutation.
+        // We do this a bit differently in rust.
+        // Chunk things up so that each head is a separate slice.
         let xbs: Vec<&mut [f32]> = s.xb.chunks_mut(head_size).collect();
+        let qs: Vec<&[f32]> = s.q.chunks(head_size).collect();
+        assert_eq!(xbs.len(), s.att.len());
         s.att
             .par_iter_mut()
             .zip(xbs)
             .enumerate()
             .for_each(|(h, (att, xb))| {
                 // get the query vector for this head
-                let q = &s.q[h * head_size..];
+                let q = &qs[h];
                 // attention scores for this head
                 //let mut att = &mut s.att[h * p.seq_len..];
                 // iterate over all timesteps, including the current one
                 for t in 0..=pos {
                     // get the key vector for this head and at this timestep
-                    let k = &s.key_cache[loff + t * dim + h * head_size..];
+                    let k = &s.key_cache[loff + t * dim + h * head_size..][..head_size];
                     // calculate the attention score as the dot product of q and k
-                    let score = q
-                        .iter()
-                        .zip(k.iter())
-                        .map(|(&q_i, &k_i)| q_i * k_i)
-                        .sum::<f32>()
-                        / (head_size as f32).sqrt();
+                    let score = dot(q, k) / (head_size as f32).sqrt();
                     // save the score to the attention buffer
                     att[t] = score;
                 }
@@ -400,7 +411,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
                 }
                 for t in 0..=pos {
                     // get the value vector for this head and at this timestep
-                    let v = &s.value_cache[loff + t * dim + h * head_size..];
+                    let v = &s.value_cache[loff + t * dim + h * head_size..][..head_size];
                     // get the attention weight for this timestep
                     let a = att[t];
                     // accumulate the weighted value into xb
@@ -414,7 +425,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
         matmul(
             &mut s.xb2,
             &s.xb,
-            &w.wo[l * dim * dim..(l + 1) * dim * dim],
+            &w.wo[l * dim * dim..][..dim * dim],
             dim,
             dim,
         );
