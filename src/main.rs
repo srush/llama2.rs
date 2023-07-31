@@ -66,19 +66,26 @@ struct Config {
     n_kv_heads: usize, // number of key/value heads (can be < query heads because of multiquery)
     vocab_size: usize, // vocabulary size, usually 256 (byte-level)
     seq_len: usize,    // max sequence length
+    shared_weight: bool
 }
 
 impl Config {
     fn load(file: &mut File) -> Self {
-        Config {
+        let mut conf = Config {
             dim: read_usize(file),
             hidden_dim: read_usize(file),
             n_layers: read_usize(file),
             n_heads: read_usize(file),
             n_kv_heads: read_usize(file),
-            vocab_size: read_usize(file),
-            seq_len: read_usize(file),
-        }
+            vocab_size: 0,
+            seq_len: 0,
+            shared_weight: false
+        };
+        let vocab_size = read_usize(file) as i32;
+        conf.vocab_size = vocab_size.abs() as usize;
+        conf.shared_weight = vocab_size > 0;
+        conf.seq_len = read_usize(file);
+        conf
     }
 }
 
@@ -143,7 +150,7 @@ struct TransformerWeights<'a> {
 }
 
 impl<'a> TransformerWeights<'a> {
-    fn init(p: &Config, f: &'a [f32], shared_weights: bool) -> Self {
+    fn init(p: &Config, f: &'a [f32]) -> Self {
         let mut ptr = Ptr { x: f, total: 0 };
         let head_size = p.dim / p.n_heads;
         let mut ret = TransformerWeights {
@@ -162,8 +169,8 @@ impl<'a> TransformerWeights<'a> {
             freq_cis_imag: ptr.align(p.seq_len as usize * head_size / 2),
             wcls: &[],
         };
-        ret.wcls = if !shared_weights {
-            &ptr.align(p.dim * p.vocab_size as usize)
+        ret.wcls = if !p.shared_weight {
+            ptr.align(p.dim * p.vocab_size)
         } else {
             ret.token_embedding_table
         };
@@ -540,7 +547,7 @@ fn main() {
 
     // Config
     let config = Config::load(&mut file);
-    // println!("Configuration: {config:?}");
+    println!("Configuration: {config:?}");
 
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     //let start = 0;
@@ -552,8 +559,7 @@ fn main() {
         )
     };
 
-    let shared_weights = true;
-    let weights = TransformerWeights::init(&config, data, shared_weights);
+    let weights = TransformerWeights::init(&config, data);
     //println!("weights {:?} {:?}", weights.token_embedding_table[0], weights.w2[0]);
 
     // right now we cannot run for more than config.seq_len steps
