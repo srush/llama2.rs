@@ -1,6 +1,6 @@
 # llama2.rs
 
-This is a working Rust port of the https://github.com/srush/llama2.c
+This is a working Rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c)
 
 To build:
 
