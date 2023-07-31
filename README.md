@@ -1,30 +1,41 @@
 # llama2.rs
 
-This is a working Rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c)
+This is a one-file Rust implementation of Llama2.
+It's rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c)
 
 To build:
 
 ```bash
-cargo build
-wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
+> cargo build --release
 ```
 
-To Run 
+To run (follow instructions to get [llama2_7b.bin](https://github.com/karpathy/llama2.c).)
 
 ```bash
-$ target/release/llama2_rs stories15M.bin  0.0 20 
-<s> Once upon a time, a little girl was very happy. She was a little little girl who loved
-achieved tok/s: 121.79487
+> target/release/llama2_rs ../llama2.c/llama2_7b.bin 0.0 11 "The only thing"
+The only thing that is certain in life is change.
+achieved tok/s: 0.92618316
+
 ```
 
-It seems like it is pretty fast. Waiting to get access to llama2 so I can benchmark it for real. 
+It actually seems like it is pretty fast! On my computer this is the speed and output of running the original llama2.c
 
-### Dependencies
+```bash
+> ./run llama2_7b.bin 0.0 11 "The only thing"
+The only thing that is certain in life is change.
+achieved tok/s: 0.139889
+```
 
-This relies on `memmap2`for (unsafe) memory mapping and `rayon` as a replacement of openmp. 
+### How does it work?
+
+This is basically a port of the original code, with extra type information to make it easier to extend. 
+
+There are two dependencies: 
+* `memmap2`for memory mapping
+* `rayon` for parallel computation. 
 
 ### Why? 
 
-Mostly this was an exercise in learning some Rust. Was curious how you port over things like memory mapping, parallel processing, and some of the mathematical tricks. Generally it works pretty well. Feel like the Rust code is more readable, safer, and doesn't really sacrifice much. 
+Mostly this was an exercise in learning some Rust. Was curious how you port over things like memory mapping, parallel processing, and some of the mathematical tricks. 
 
 This is my first Rust project, so if you are an expert I would love a code review!
