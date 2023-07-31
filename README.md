@@ -3,7 +3,7 @@
 This is a one-file Rust implementation of Llama2 that works pretty well. 
 It's Rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c)
 
-![image](https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1)
+<img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
 
 To build:
