@@ -5,13 +5,13 @@ It's rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c)
 
 To build:
 
-```bash
+```
 > cargo build --release
 ```
 
 To run (follow instructions to get [llama2_7b.bin](https://github.com/karpathy/llama2.c).)
 
-```bash
+```
 > target/release/llama2_rs ../llama2.c/llama2_7b.bin 0.0 11 "The only thing"
 The only thing that is certain in life is change.
 achieved tok/s: 0.92618316
@@ -20,7 +20,7 @@ achieved tok/s: 0.92618316
 
 It actually seems like it is pretty fast! On my computer this is the speed and output of running the original llama2.c
 
-```bash
+```
 > ./run llama2_7b.bin 0.0 11 "The only thing"
 The only thing that is certain in life is change.
 achieved tok/s: 0.139889
