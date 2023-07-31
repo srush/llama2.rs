@@ -10,7 +10,7 @@ To build:
 To Run 
 
 > $ target/release/llama2_rs stories15M.bin  0.0 20 
-<s> Once upon a time, a little girl was very happy. She was a little little girl who loved
+> <s> Once upon a time, a little girl was very happy. She was a little little girl who loved
 achieved tok/s: 121.79487
 
 It seems like it is pretty fast. Waiting to get access to llama2 so I can benchmark it for real. 
