@@ -4,11 +4,11 @@ use std::str::from_utf8_unchecked;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 use std::fs::File;
-use std::io::{Read, Write, Seek, SeekFrom, stdout};
+use std::io::{Read, Write, Seek, SeekFrom};
 use rayon::prelude::*;
-use memmap2::{Mmap, MmapOptions};
+use memmap2::MmapOptions;
 
-
+// Some helpers for reading from binary files.
 fn read_usize(file : &mut File) -> usize {
     let mut buf = [0u8; 4];
     file.read_exact(&mut buf).unwrap();
@@ -27,8 +27,36 @@ fn read_str(file : &mut File, len: usize) -> String {
     unsafe {from_utf8_unchecked(&buf).to_owned() }
 }
 
+fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
+    // find the first perfect match for str in vocab, return its index or -1 if not found
+    vocab.into_iter().position(|x| x == str)
+}
+
+
+// C-like point arithmetic
+struct Ptr<'a> {
+    x: &'a[f32],
+    total: usize
+}
+
+impl<'a> Ptr<'a> {
+    fn align(self: &mut Self, size: usize) -> &'a[f32] {
+        self.total = self.total + size;
+        let ret = &self.x[..size];
+        self.x = &self.x[size..];
+        ret
+    }
+} 
+
+fn argmax(v: &[f32]) -> usize {
+    // return argmax of v in elements 0..n
+    v.iter().enumerate().reduce(|a, b| 
+        if a.1 > b.1 { a } else { b }).unwrap().0
+}
+
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Config {
     dim:  usize, // transformer dimension
     hidden_dim: usize, // for ffn layers
@@ -51,30 +79,6 @@ impl Config {
             seq_len: read_usize(file),
         }
     }
-}
-
-struct TransformerWeights<'a> {
-    // token embedding table
-    token_embedding_table: &'a[f32], // (vocab_size, dim)
-    // weights for rmsnorms
-    rms_att_weight: &'a[f32]    , // (layer, dim) rmsnorm weights
-    rms_ffn_weight: &'a[f32], // (layer, dim)
-    // weights for matmuls
-    wq: &'a[f32], // (layer, dim, dim)
-    wk: &'a[f32], // (layer, dim, dim)
-    wv: &'a[f32], // (layer, dim, dim)
-    wo: &'a[f32], // (layer, dim, dim)
-    // weights for ffn
-    w1: &'a[f32], // (layer, hidden_dim, dim)
-    w2: &'a[f32], // (layer, dim, hidden_dim)
-    w3: &'a[f32], // (layer, hidden_dim, dim)
-    // final rmsnorm
-    rms_final_weight: &'a[f32], // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    freq_cis_real: &'a[f32], // (seq_len, dim/2)
-    freq_cis_imag: &'a[f32], // (seq_len, dim/2)
-    // (optional) classifier weights for the logits, on the last layer
-    wcls: &'a[f32],
 }
 
 struct RunState {
@@ -113,20 +117,29 @@ impl RunState {
     }
 }
 
-
-struct Ptr<'a> {
-    x: &'a[f32],
-    total: usize
+struct TransformerWeights<'a> {
+    // token embedding table
+    token_embedding_table: &'a[f32], // (vocab_size, dim)
+    // weights for rmsnorms
+    rms_att_weight: &'a[f32]    , // (layer, dim) rmsnorm weights
+    rms_ffn_weight: &'a[f32], // (layer, dim)
+    // weights for matmuls
+    wq: &'a[f32], // (layer, dim, dim)
+    wk: &'a[f32], // (layer, dim, dim)
+    wv: &'a[f32], // (layer, dim, dim)
+    wo: &'a[f32], // (layer, dim, dim)
+    // weights for ffn
+    w1: &'a[f32], // (layer, hidden_dim, dim)
+    w2: &'a[f32], // (layer, dim, hidden_dim)
+    w3: &'a[f32], // (layer, hidden_dim, dim)
+    // final rmsnorm
+    rms_final_weight: &'a[f32], // (dim,)
+    // freq_cis for RoPE relatively positional embeddings
+    freq_cis_real: &'a[f32], // (seq_len, dim/2)
+    freq_cis_imag: &'a[f32], // (seq_len, dim/2)
+    // (optional) classifier weights for the logits, on the last layer
+    wcls: &'a[f32],
 }
-
-impl<'a> Ptr<'a> {
-    fn align(self: &mut Self, size: usize) -> &'a[f32] {
-        self.total = self.total + size;
-        let ret = &self.x[..size];
-        self.x = &self.x[size..];
-        ret
-    }
-} 
 
 impl<'a> TransformerWeights<'a> {
     fn init(p: &Config, f: &'a[f32], shared_weights: bool) -> Self {
@@ -164,16 +177,8 @@ type Token = usize;
 struct Tokenizer {
     vocab: Vec<String>,
     vocab_scores: Vec<f32>,
-    max_token_length: usize,
-    vocab_size: usize
+    max_token_length: usize
 }
-
-fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
-    // find the first perfect match for str in vocab, return its index or -1 if not found
-    vocab.into_iter().position(|x| x == str)
-}
-
-
 
 impl Tokenizer {
     fn load(file: &mut File, config: &Config) -> Tokenizer {
@@ -181,8 +186,7 @@ impl Tokenizer {
         let mut tokenizer = Tokenizer {
             vocab: Vec::with_capacity(config.vocab_size),
             vocab_scores: Vec::with_capacity(config.vocab_size),
-            max_token_length: 0u32 as usize,
-            vocab_size: config.vocab_size
+            max_token_length: 0u32 as usize
         };
         tokenizer.max_token_length = read_usize(file);
         for _ in 0..config.vocab_size {
@@ -251,8 +255,8 @@ impl Tokenizer {
 // ----------------------------------------------------------------------------
 // neural net blocks
 
-fn accum(a: &mut [f32], b: &[f32], size: usize) {
-    for i in 0..size {
+fn accum(a: &mut [f32], b: &[f32]) {
+    for i in 0..a.len() {
         a[i] += b[i];
     }
 }
@@ -274,9 +278,8 @@ fn rmsnorm(o: &mut [f32], xo: Option<&[f32]>, weight: &[f32], size: usize) {
     }
 }
 
-fn softmax(x: &mut [f32], size: usize) {
+fn softmax(x: &mut [f32]) {
     // find max value (for numerical stability)
-    let x = &mut x[..size];
     let max_val = x.iter().fold(x[0], |acc, &x_i| acc.max(x_i));
     // exp and sum
     let mut sum = 0.0;
@@ -293,6 +296,7 @@ fn softmax(x: &mut [f32], size: usize) {
 fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
+    assert_eq!(d, xout.len());
     xout.par_iter_mut().enumerate().for_each(|(i, v)| {
         let mut val = 0.0;
         for j in 0..n {
@@ -310,12 +314,12 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
     let head_size = dim / p.n_heads;
 
     // copy the token embedding into x
-    let content_row = &w.token_embedding_table[(token * dim)..((token + 1) * dim)];
+    let content_row = &w.token_embedding_table[(token * dim)..][..dim];
     x.copy_from_slice(content_row);
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    let freq_cis_real_row = &w.freq_cis_real[(pos * head_size / 2)..((pos + 1) * head_size / 2)];
-    let freq_cis_imag_row = &w.freq_cis_imag[(pos * head_size / 2)..((pos + 1) * head_size / 2)];
+    let freq_cis_real_row = &w.freq_cis_real[(pos * head_size / 2)..][..head_size / 2];
+    let freq_cis_imag_row = &w.freq_cis_imag[(pos * head_size / 2)..][..head_size / 2];
 
     // forward all the layers
     for l in 0..p.n_layers {
@@ -355,10 +359,8 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
         value_cache_row.copy_from_slice(&s.v);
 
         // multihead attention. iterate over all heads
-        //let xbs: Vec<_> = (0..p.n_heads).map(|h| &s.xb[h * head_size..]).collect();
-
+        // This part requires ensuring that there is safety in parallel mutation.
         let xbs: Vec<&mut [f32]> = s.xb.chunks_mut(head_size).collect();
-
         s.att.par_iter_mut().zip(xbs).enumerate().for_each(|(h, (att, xb))| {
             // get the query vector for this head
             let q = &s.q[h * head_size..];
@@ -375,7 +377,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
-            softmax(att, pos+1);
+            softmax(&mut att[..=pos]);
 
             // weighted sum of the values, store back into xb
             //let xb = &mut s.xb[h * head_size..];
@@ -398,7 +400,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
         matmul(&mut s.xb2, &s.xb, &w.wo[l * dim * dim..(l + 1) * dim * dim], dim, dim);
 
         // residual connection back into x
-        accum(x, &s.xb2, dim);
+        accum(x, &s.xb2);
 
         // ffn rmsnorm
         rmsnorm(&mut s.xb, Some(x), &w.rms_ffn_weight[l * dim..], dim);
@@ -422,7 +424,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
         matmul(&mut s.xb, &s.hb, &w.w2[l * dim * hidden_dim..], hidden_dim, dim);
 
         // residual connection
-        accum(x, &s.xb, dim);
+        accum(x, &s.xb);
     }
 
     // final rmsnorm
@@ -488,11 +490,6 @@ impl Random {
     }
 }
 
-fn argmax(v: &[f32]) -> usize {
-    // return argmax of v in elements 0..n
-    v.iter().enumerate().reduce(|a, b| 
-        if a.1 > b.1 { a } else { b }).unwrap().0
-}
 
 fn main() {
     // poor man's Rust argparse
@@ -554,7 +551,7 @@ fn main() {
 
     // start the main loop
     let mut start = 0; // used to time our code, only initialized after first iteration
-    let mut next = 0; // will store the next token in the sequence
+    let mut next; // will store the next token in the sequence
     let mut token: Token = 1; // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     let mut pos = 0; // position in the sequence
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
@@ -575,7 +572,7 @@ fn main() {
                     state.logits[q] /= temperature;
                 }
                 // apply softmax to the logits to get the probabilities for next token
-                softmax(&mut state.logits, config.vocab_size);
+                softmax(&mut state.logits[..config.vocab_size]);
                 // we sample from this distribution to get the next token
                 next = random.sample(&state.logits, config.vocab_size);
             }
@@ -590,7 +587,7 @@ fn main() {
             &tokenizer.vocab[next]
         };
         print!("{}", token_str);
-        io::stdout().flush();
+        io::stdout().flush().expect("flush failed");
     
 
         // advance forward
