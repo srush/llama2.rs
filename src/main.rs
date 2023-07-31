@@ -102,8 +102,8 @@ struct RunState {
     att: Vec<Vec<f32>>, // buffer for scores/attention values (n_heads, seq_len)
     logits: Vec<f32>,   // output logits
     // kv cache
-    key_cache: Vec<f32>,   // (layer, seq_len, dim)
-    value_cache: Vec<f32>, // (layer, seq_len, dim)
+    key_cache: Vec<Vec<Vec<f32>>>,   // (layer, seq_len, dim)
+    value_cache: Vec<Vec<Vec<f32>>>, // (layer, seq_len, dim)
 }
 
 impl RunState {
@@ -119,8 +119,8 @@ impl RunState {
             v: vec![0.0; p.dim],
             att: vec![vec![0.0; p.seq_len]; p.n_heads],
             logits: vec![0.0; p.vocab_size],
-            key_cache: vec![0.0; p.n_layers * p.seq_len * p.dim],
-            value_cache: vec![0.0; p.n_layers * p.seq_len * p.dim],
+            key_cache: vec![vec![vec![0.0; p.dim];p.seq_len]; p.n_layers],
+            value_cache: vec![vec![vec![0.0; p.dim];p.seq_len]; p.n_layers],
         }
     }
 }
@@ -370,9 +370,8 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
         }
 
         // save key,value at this time step (pos) to our kv cache
-        let loff = l * p.seq_len * dim; // kv cache layer offset for convenience
-        let key_cache_row = &mut s.key_cache[loff + pos * dim..][..dim];
-        let value_cache_row = &mut s.value_cache[loff + pos * dim..][..dim];
+        let key_cache_row = &mut s.key_cache[l][pos];
+        let value_cache_row = &mut s.value_cache[l][pos];
         key_cache_row.copy_from_slice(&s.k);
         value_cache_row.copy_from_slice(&s.v);
 
@@ -394,7 +393,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
                 // iterate over all timesteps, including the current one
                 for t in 0..=pos {
                     // get the key vector for this head and at this timestep
-                    let k = &s.key_cache[loff + t * dim + h * head_size..][..head_size];
+                    let k = &s.key_cache[l][t][h * head_size..][..head_size];
                     // calculate the attention score as the dot product of q and k
                     let score = dot(q, k) / (head_size as f32).sqrt();
                     // save the score to the attention buffer
@@ -411,7 +410,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &Trans
                 }
                 for t in 0..=pos {
                     // get the value vector for this head and at this timestep
-                    let v = &s.value_cache[loff + t * dim + h * head_size..][..head_size];
+                    let v = &s.value_cache[l][t][h * head_size..][..head_size];
                     // get the attention weight for this timestep
                     let a = att[t];
                     // accumulate the weighted value into xb
