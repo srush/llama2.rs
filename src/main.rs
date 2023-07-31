@@ -66,7 +66,7 @@ struct Config {
     n_kv_heads: usize, // number of key/value heads (can be < query heads because of multiquery)
     vocab_size: usize, // vocabulary size, usually 256 (byte-level)
     seq_len: usize,    // max sequence length
-    shared_weight: bool
+    shared_weight: bool,
 }
 
 impl Config {
@@ -79,7 +79,7 @@ impl Config {
             n_kv_heads: read_usize(file),
             vocab_size: 0,
             seq_len: 0,
-            shared_weight: false
+            shared_weight: false,
         };
         let vocab_size = read_usize(file) as i32;
         conf.vocab_size = vocab_size.abs() as usize;
@@ -119,8 +119,8 @@ impl RunState {
             v: vec![0.0; p.dim],
             att: vec![vec![0.0; p.seq_len]; p.n_heads],
             logits: vec![0.0; p.vocab_size],
-            key_cache: vec![vec![vec![0.0; p.dim];p.seq_len]; p.n_layers],
-            value_cache: vec![vec![vec![0.0; p.dim];p.seq_len]; p.n_layers],
+            key_cache: vec![vec![vec![0.0; p.dim]; p.seq_len]; p.n_layers],
+            value_cache: vec![vec![vec![0.0; p.dim]; p.seq_len]; p.n_layers],
         }
     }
 }
@@ -176,7 +176,6 @@ impl<'a> TransformerWeights<'a> {
         };
         assert_eq!(ptr.total, f.len());
         ret
-
     }
 }
 
@@ -317,11 +316,10 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
 
 fn dot(q: &[f32], k: &[f32]) -> f32 {
     assert_eq!(q.len(), k.len());
-    q
-    .iter()
-    .zip(k.iter())
-    .map(|(&q_i, &k_i)| q_i * k_i)
-    .sum::<f32>()
+    q.iter()
+        .zip(k.iter())
+        .map(|(&q_i, &k_i)| q_i * k_i)
+        .sum::<f32>()
 }
 
 fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, w: &TransformerWeights) {
