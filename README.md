@@ -18,7 +18,6 @@ To run (follow instructions to get [llama2_7b.bin](https://github.com/karpathy/l
 > target/release/llama2_rs llama2_7b.bin 0.0 11 "The only thing"
 The only thing that is certain in life is change.
 achieved tok/s: 1.0298662
-
 ```
 
 It actually seems like it is pretty fast! On my computer this is the speed and output of running the original llama2.c
