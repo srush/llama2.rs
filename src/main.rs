@@ -305,13 +305,13 @@ fn matmul(xout: &mut [f32], x: &[f32], w: &[f32], n: usize, d: usize) {
     // by far the most amount of time is spent inside this little function
     assert_eq!(d, xout.len());
     assert_eq!(n, x.len());
+
     xout.par_iter_mut().enumerate().for_each(|(i, v)| {
-        let mut val = 0.0;
-        for j in 0..n {
-            val += w[i * n + j] * x[j];
-        }
-        *v = val;
-    })
+        *v = w[i * n..(i + 1) * n]
+            .iter()
+            .zip(x.iter())
+            .fold(0f32, |acc, (&_w, &_x)| acc + _w * _x);
+    });
 }
 
 fn dot(q: &[f32], k: &[f32]) -> f32 {
