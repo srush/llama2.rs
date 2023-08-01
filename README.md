@@ -15,9 +15,9 @@ To build:
 To run (follow instructions to get [llama2_7b.bin](https://github.com/karpathy/llama2.c).)
 
 ```
-> target/release/llama2_rs ../llama2.c/llama2_7b.bin 0.0 11 "The only thing"
+> target/release/llama2_rs llama2_7b.bin 0.0 11 "The only thing"
 The only thing that is certain in life is change.
-achieved tok/s: 0.92618316
+achieved tok/s: 1.0298662
 
 ```
 
