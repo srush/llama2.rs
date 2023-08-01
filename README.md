@@ -28,6 +28,11 @@ It actually seems like it is pretty fast! On my computer this is the speed and o
 The only thing that is certain in life is change.
 achieved tok/s: 0.139889
 ```
+### See Also
+
+* [llama2.rs](https://github.com/gaxler/llama2.rs) from @gaxler 
+* [llama2.rs](https://github.com/leo-du/llama2.rs) from @leo-du
+* [candle](https://github.com/LaurentMazare/candle) and candle llama from @LaurentMazare
 
 ### How does it work?
 
