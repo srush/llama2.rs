@@ -44,21 +44,6 @@ fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
     vocab.into_iter().position(|x| x == str)
 }
 
-// C-like point arithmetic
-struct Ptr<'a> {
-    x: &'a [f32],
-    total: usize,
-}
-
-impl<'a> Ptr<'a> {
-    fn align(self: &mut Self, size: usize) -> &'a [f32] {
-        self.total = self.total + size;
-        let ret = &self.x[..size];
-        self.x = &self.x[size..];
-        ret
-    }
-}
-
 fn argmax(v: &[f32]) -> usize {
     // return argmax of v in elements 0..n
     v.iter()
@@ -123,14 +108,14 @@ struct RunState {
     k: [f32; DIM],                  // key (dim,)
     v: [f32; DIM],                  // value (dim,)
     att: [[f32; SEQ_LEN]; N_HEADS], // buffer for scores/attention values (n_heads, seq_len)
-    logits: [f32; VOCAB_SIZE],               // output logits
+    logits: [f32; VOCAB_SIZE],      // output logits
     // kv cache
     key_cache: [[[[f32; HEAD_SIZE]; N_HEADS]; SEQ_LEN]; N_LAYERS], // (layer, seq_len, dim)
     value_cache: [[[[f32; HEAD_SIZE]; N_HEADS]; SEQ_LEN]; N_LAYERS], // (layer, seq_len, dim)
 }
 
 impl RunState {
-    fn new(p: &Config) -> Self {
+    fn new() -> Self {
         RunState {
             x: [0.0; DIM],
             xb: [0.0; DIM],
@@ -148,6 +133,7 @@ impl RunState {
     }
 }
 
+#[repr(C)]
 struct TransformerWeights {
     // token embedding table
     token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
@@ -293,8 +279,7 @@ fn softmax(x: &mut [f32]) {
     }
 }
 
-fn matmul<const N: usize, const D: usize>(
-    xout: &mut [f32; D], x: &[f32; N], w: &[[f32; N]; D]) {
+fn matmul<const N: usize, const D: usize>(xout: &mut [f32; D], x: &[f32; N], w: &[[f32; N]; D]) {
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function
     xout.par_iter_mut().enumerate().for_each(|(i, v)| {
@@ -313,11 +298,15 @@ fn dot(q: &[f32], k: &[f32]) -> f32 {
         .sum::<f32>()
 }
 
-fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState, 
-    w: &TransformerWeights, last_layer: &[[f32; DIM]; VOCAB_SIZE]) {
+fn transformer(
+    token: usize,
+    pos: usize,
+    s: &mut RunState,
+    w: &TransformerWeights,
+    last_layer: &[[f32; DIM]; VOCAB_SIZE],
+) {
     // a few convenience variables
     let x = &mut s.x;
-
 
     // copy the token embedding into x
     x.copy_from_slice(&w.token_embedding_table[token]);
@@ -360,7 +349,7 @@ fn transformer(token: usize, pos: usize, p: &Config, s: &mut RunState,
         let key_cache_row = &mut s.key_cache[l][pos];
         let value_cache_row = &mut s.value_cache[l][pos];
         for h in 0..N_HEADS {
-            for d in 0..HEAD_SIZE {  
+            for d in 0..HEAD_SIZE {
                 key_cache_row[h][d] = s.k[h * HEAD_SIZE + d];
                 value_cache_row[h][d] = s.v[h * HEAD_SIZE + d];
             }
@@ -529,14 +518,17 @@ fn main() {
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
     assert_eq!(mmap.len(), mem::size_of::<TransformerWeights>());
-    let mut weights: Box<TransformerWeights> =
+    let weights: Box<TransformerWeights> =
         unsafe { Box::from_raw(mmap.as_ptr() as *mut TransformerWeights) };
 
-    let mut last_layer;
-    let mut wcls: Box<[[f32; DIM]; VOCAB_SIZE]> = vec![[0.0; DIM]; VOCAB_SIZE].into_boxed_slice().try_into().unwrap();
+    let last_layer;
+    let mut wcls: Box<[[f32; DIM]; VOCAB_SIZE]> = vec![[0.0; DIM]; VOCAB_SIZE]
+        .into_boxed_slice()
+        .try_into()
+        .unwrap();
 
     for i in 0..VOCAB_SIZE {
-        for j in 0 ..DIM {
+        for j in 0..DIM {
             if SHARED_SIZE == 0 {
                 wcls[i][j] = weights.token_embedding_table[i][j];
             } else {
@@ -560,7 +552,7 @@ fn main() {
     };
 
     // create and init the application RunState
-    let mut state = RunState::new(&config);
+    let mut state = RunState::new();
 
     // process the prompt, if any
     let prompt_tokens = if !prompt.is_empty() {
@@ -577,7 +569,7 @@ fn main() {
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
     while pos < steps {
         // forward the transformer to get logits for the next token
-        transformer(token, pos, &config, &mut state, &weights, &last_layer);
+        transformer(token, pos, &mut state, &weights, &last_layer);
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
@@ -623,4 +615,7 @@ fn main() {
         "\nachieved tok/s: {}",
         (steps - 1) as f32 / (end - start) as f32 * 1000.0
     );
+
+    // Don't free weights, they're mmapped.
+    mem::forget(weights);
 }
