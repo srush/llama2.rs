@@ -115,7 +115,12 @@ struct RunState {
 }
 
 impl RunState {
+<<<<<<< HEAD
     fn new() -> Self {
+=======
+    fn new(p: &Config) -> Self {
+        // I'm too lazy
+>>>>>>> 6c881aa (typed)
         RunState {
             x: [0.0; DIM],
             xb: [0.0; DIM],
@@ -521,7 +526,11 @@ fn main() {
     let weights: Box<TransformerWeights> =
         unsafe { Box::from_raw(mmap.as_ptr() as *mut TransformerWeights) };
 
+<<<<<<< HEAD
     let last_layer;
+=======
+    let mut last_layer;
+>>>>>>> 6c881aa (typed)
     let mut wcls: Box<[[f32; DIM]; VOCAB_SIZE]> = vec![[0.0; DIM]; VOCAB_SIZE]
         .into_boxed_slice()
         .try_into()
@@ -584,7 +593,7 @@ fn main() {
                     state.logits[q] /= temperature;
                 }
                 // apply softmax to the logits to get the probabilities for next token
-                softmax(&mut state.logits[..config.vocab_size]);
+                softmax(&mut state.logits[..VOCAB_SIZE]);
                 // we sample from this distribution to get the next token
                 next = random.sample(&state.logits, config.vocab_size);
             }
