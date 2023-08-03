@@ -115,12 +115,7 @@ struct RunState {
 }
 
 impl RunState {
-<<<<<<< HEAD
     fn new() -> Self {
-=======
-    fn new(p: &Config) -> Self {
-        // I'm too lazy
->>>>>>> 6c881aa (typed)
         RunState {
             x: [0.0; DIM],
             xb: [0.0; DIM],
