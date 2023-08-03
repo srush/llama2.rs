@@ -20,7 +20,6 @@ use std::{env, io};
 // const SHARED_SIZE: usize = 0;
 // const HEAD_SIZE: usize = DIM / N_HEADS;
 
-
 // Llama 7B
 const DIM: usize = 4096;
 const HIDDEN_DIM: usize = 11008;
@@ -114,25 +113,24 @@ impl Config {
 
 struct RunState {
     // current wave of activations
-    x: [fX; DIM],                  // activation at current time stamp (dim,)
-    xb: [fX; DIM],                 // same, but inside a residual branch (dim,)
-    xb2: [fX; DIM],                // an additional buffer just for convenience (dim,)
-    hb: [fX; HIDDEN_DIM],          // buffer for hidden dimension in the ffn (hidden_dim,)
-    hb2: [fX; HIDDEN_DIM],         // buffer for hidden dimension in the ffn (hidden_dim,)
-    q: [fX; DIM],                  // query (dim,)
-    k: [fX; DIM],                  // key (dim,)
-    v: [fX; DIM],                  // value (dim,)
-    att: Vec<[fX; SEQ_LEN]>, // buffer for scores/attention values (n_heads, seq_len)
-    logits: [fX; VOCAB_SIZE],      // output logits
+    x: [fX; DIM],             // activation at current time stamp (dim,)
+    xb: [fX; DIM],            // same, but inside a residual branch (dim,)
+    xb2: [fX; DIM],           // an additional buffer just for convenience (dim,)
+    hb: [fX; HIDDEN_DIM],     // buffer for hidden dimension in the ffn (hidden_dim,)
+    hb2: [fX; HIDDEN_DIM],    // buffer for hidden dimension in the ffn (hidden_dim,)
+    q: [fX; DIM],             // query (dim,)
+    k: [fX; DIM],             // key (dim,)
+    v: [fX; DIM],             // value (dim,)
+    att: Vec<[fX; SEQ_LEN]>,  // buffer for scores/attention values (n_heads, seq_len)
+    logits: [fX; VOCAB_SIZE], // output logits
     // kv cache
-    key_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_HEADS]> >, // (layer, seq_len, dim)
-    value_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_HEADS]> > , // (layer, seq_len, dim)
+    key_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_HEADS]>>, // (layer, seq_len, dim)
+    value_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_HEADS]>>, // (layer, seq_len, dim)
 }
 
 impl RunState {
     fn new() -> Box<Self> {
-        Box::new(
-        RunState {
+        Box::new(RunState {
             x: [0.0; DIM],
             xb: [0.0; DIM],
             xb2: [0.0; DIM],
@@ -150,11 +148,11 @@ impl RunState {
 }
 
 #[repr(C)]
-struct Linear<const IN:usize, const OUT:usize>  {
-   w: [[fX; IN]; OUT]
+struct Linear<const IN: usize, const OUT: usize> {
+    w: [[fX; IN]; OUT],
 }
 
-impl<const IN: usize, const OUT: usize>  Linear<IN, OUT> {
+impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
     fn matvec(self: &Self, xout: &mut [fX; OUT], x: &[fX; IN]) {
         // W (d,n) @ x (n,) -> xout (d,)
         // by far the most amount of time is spent inside this little function
@@ -164,7 +162,7 @@ impl<const IN: usize, const OUT: usize>  Linear<IN, OUT> {
                 .zip(x.iter())
                 .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
         });
-    }  
+    }
 }
 
 #[repr(C)]
@@ -190,7 +188,7 @@ struct TransformerWeights {
     freq_cis_real: [[fX; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
     freq_cis_imag: [[fX; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
     // (optional) classifier weights for the logits, on the last layer
-    wcls: Linear< DIM, VOCAB_SIZE>, // (dim,)
+    wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
 }
 
 type Token = usize;
@@ -313,7 +311,6 @@ fn softmax(x: &mut [fX]) {
     }
 }
 
-
 fn dot(q: &[fX], k: &[fX]) -> fX {
     assert_eq!(q.len(), k.len());
     q.iter()
@@ -322,12 +319,7 @@ fn dot(q: &[fX], k: &[fX]) -> fX {
         .sum::<fX>()
 }
 
-fn transformer(
-    token: usize,
-    pos: usize,
-    s: &mut RunState,
-    w: &TransformerWeights
-) {
+fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TransformerWeights) {
     // a few convenience variables
     let x = &mut s.x;
 
@@ -554,7 +546,7 @@ fn main() {
     };
 
     // create and init the application RunState
-    let mut state : Box<RunState>= RunState::new();
+    let mut state: Box<RunState> = RunState::new();
     // process the prompt, if any
     let prompt_tokens = if !prompt.is_empty() {
         tokenizer.bpe_encode(&prompt)
