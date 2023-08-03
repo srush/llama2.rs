@@ -526,11 +526,7 @@ fn main() {
     let weights: Box<TransformerWeights> =
         unsafe { Box::from_raw(mmap.as_ptr() as *mut TransformerWeights) };
 
-<<<<<<< HEAD
     let last_layer;
-=======
-    let mut last_layer;
->>>>>>> 6c881aa (typed)
     let mut wcls: Box<[[f32; DIM]; VOCAB_SIZE]> = vec![[0.0; DIM]; VOCAB_SIZE]
         .into_boxed_slice()
         .try_into()
