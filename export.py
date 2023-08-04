@@ -22,7 +22,7 @@ def export(model2, filepath='model.bin'):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(filepath, 'wb')
     p = {}
-    EXPAND = False
+    EXPAND = True
     model = model2.model.model
     p['n_layers'] = len(model.layers)
     print(model2.model)

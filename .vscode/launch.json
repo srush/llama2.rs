@@ -15,7 +15,7 @@
             // As such, this path would have to change accordingly.
             "program": "${workspaceFolder}/target/debug/llama2_rs",
             // If you wish to supply arguments/parameters to the program, supply them below:
-            "args": ["stories15M.bin"],
+            "args": ["q70b.bin"],
             // Working folder for execution. Change as necessary if program requires a different value:
             "cwd": "${workspaceFolder}",
             "terminal": "external",

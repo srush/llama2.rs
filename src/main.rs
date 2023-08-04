@@ -236,7 +236,7 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
     }
 }
 
-
+type TWeights = QTransformerWeights;
 #[repr(C)]
 struct TransformerWeights {
     // token embedding table
@@ -245,8 +245,8 @@ struct TransformerWeights {
     rms_att_weight: [[fX; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
     // weights for matmuls
     wq: [Linear<DIM, DIM>; N_LAYERS], // (layer, dim, dim)
-    wk: [Linear<DIM, DIM>; N_LAYERS], // (layer, dim, dim)
-    wv: [Linear<DIM, DIM>; N_LAYERS], // (layer, dim, dim)
+    wk: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
+    wv: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
     wo: [Linear<DIM, DIM>; N_LAYERS], // (layer, dim, dim)
 
     rms_ffn_weight: [[fX; DIM]; N_LAYERS], // (layer, dim)
@@ -427,7 +427,7 @@ fn dot(q: &[fX], k: &[fX]) -> fX {
         .sum::<fX>()
 }
 
-fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeights) {
+fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TWeights) {
     // a few convenience variables
     let x = &mut s.x;
 
@@ -643,9 +643,9 @@ fn main() {
     io::stdout().flush().expect("flush failed");
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-    assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
-    let weights: Box<QTransformerWeights> =
-        unsafe { Box::from_raw(mmap.as_ptr() as *mut QTransformerWeights) };
+    assert_eq!(mmap.len(), mem::size_of::<TWeights>());
+    let weights: Box<TWeights> =
+        unsafe { Box::from_raw(mmap.as_ptr() as *mut TWeights) };
 
     // right now we cannot run for more than config.seq_len steps
     if steps <= 0 || steps > config.seq_len {
