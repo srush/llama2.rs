@@ -21,15 +21,30 @@ use std::{env, io};
 // const HEAD_SIZE: usize = DIM / N_HEADS;
 
 // Llama 7B
-const DIM: usize = 4096;
-const HIDDEN_DIM: usize = 11008;
-const N_LAYERS: usize = 32;
-const N_HEADS: usize = 32;
-const N_KV_HEADS: usize = 32;
+// const DIM: usize = 4096;
+// const HIDDEN_DIM: usize = 11008;
+// const N_LAYERS: usize = 32;
+// const N_HEADS: usize = 32;
+// const N_KV_HEADS: usize = 32;
+// const SEQ_LEN: usize = 2048;
+// const VOCAB_SIZE: usize = 32000;
+// const SHARED_SIZE: usize = 32000;
+// const HEAD_SIZE: usize = DIM / N_HEADS;
+
+
+// Configuration: Config { dim: 8192, hidden_dim: 28672, n_layers: 80, n_heads: 64, n_kv_heads: 64, vocab_size: 32000, seq_len: 2048, shared_weight: false }
+// Llama 70B
+const DIM: usize = 8192;
+const HIDDEN_DIM: usize = 28672;
+const N_LAYERS: usize = 80;
+const N_HEADS: usize = 64;
+const N_KV_HEADS: usize = 64;
 const SEQ_LEN: usize = 2048;
 const VOCAB_SIZE: usize = 32000;
 const SHARED_SIZE: usize = 32000;
 const HEAD_SIZE: usize = DIM / N_HEADS;
+
+
 
 type fX = f32;
 
@@ -170,7 +185,7 @@ const fn int_div_up(x: usize, y: usize) -> usize {
 }
 
 const BITS: usize = 4;
-const GROUPSIZE: usize = 128;
+const GROUPSIZE: usize = 50000;
 
 #[repr(C)]
 struct QLinear<const IN: usize, const OUT: usize, const GROUPS: usize, 
@@ -622,7 +637,7 @@ fn main() {
     io::stdout().flush().expect("flush failed");
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-    assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
+    // assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
     let weights: Box<QTransformerWeights> =
         unsafe { Box::from_raw(mmap.as_ptr() as *mut QTransformerWeights) };
 

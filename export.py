@@ -122,7 +122,7 @@ def export(model2, filepath='model.bin'):
 def load_and_export(model_path, output_path):
     from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
     model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
-    model_basename = "gptq_model-4bit--1g"
+    model_basename = "gptq_model-4bit-128g"
     # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
     # model_basename = "main"
 
@@ -136,13 +136,12 @@ def load_and_export(model_path, output_path):
             inject_fused_attention = False,
             inject_fused_mlp = False,
             trust_remote_code=True,
-            device="cuda:0",
+            device="cpu",
             use_triton=use_triton,
                                                
                                                quantize_config=None,
                     
     )
-
 
     # params_path = os.path.join(model_path, 'params.json')
     # with open(params_path) as f:
