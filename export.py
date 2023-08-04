@@ -26,7 +26,6 @@ def export(model2, filepath='model.bin'):
     model = model2.model.model
     p['n_layers'] = len(model.layers)
     print(model2.model)
-    exit()
     def serialize(k):
         # print(f"writing {key}...")
         w = None

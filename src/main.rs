@@ -101,7 +101,7 @@ impl Config {
         assert_eq!(self.hidden_dim, HIDDEN_DIM);
         assert_eq!(self.n_layers, N_LAYERS);
         assert_eq!(self.n_heads, N_HEADS);
-        assert_eq!(self.n_kv_heads, N_KV_HEADS);
+        //assert_eq!(self.n_kv_heads, N_KV_HEADS);
         assert_eq!(self.seq_len, SEQ_LEN);
         assert_eq!(self.vocab_size, VOCAB_SIZE);
     }
@@ -140,8 +140,8 @@ struct RunState {
     att: Vec<[fX; SEQ_LEN]>,  // buffer for scores/attention values (n_heads, seq_len)
     logits: [fX; VOCAB_SIZE], // output logits
     // kv cache
-    key_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_HEADS]>>, // (layer, seq_len, dim)
-    value_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_HEADS]>>, // (layer, seq_len, dim)
+    key_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
+    value_cache: Vec<Vec<[[fX; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
 }
 
 impl RunState {
@@ -157,8 +157,8 @@ impl RunState {
             v: [0.0; KV_DIM],
             att: vec![[0.0; SEQ_LEN]; N_HEADS],
             logits: [0.0; VOCAB_SIZE],
-            key_cache: vec![vec![[[0.0; HEAD_SIZE]; N_HEADS]; SEQ_LEN]; N_LAYERS],
-            value_cache: vec![vec![[[0.0; HEAD_SIZE]; N_HEADS]; SEQ_LEN]; N_LAYERS],
+            key_cache: vec![vec![[[0.0; HEAD_SIZE]; N_KV_HEADS]; SEQ_LEN]; N_LAYERS],
+            value_cache: vec![vec![[[0.0; HEAD_SIZE]; N_KV_HEADS]; SEQ_LEN]; N_LAYERS],
         })
     }
 }
@@ -452,19 +452,22 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
         for h in 0..N_HEADS {
             // get the q and k vectors for this head
             let q = &mut s.q[h * HEAD_SIZE..];
-            let k = &mut s.k[h / kv * HEAD_SIZE..];
+
             // rotate q and k by the freq_cis_real and freq_cis_imag
             for i in (0..HEAD_SIZE).step_by(2) {
                 let q0 = q[i];
                 let q1 = q[i + 1];
-                let k0 = k[i];
-                let k1 = k[i + 1];
                 let fcr = freq_cis_real_row[i / 2];
                 let fci = freq_cis_imag_row[i / 2];
                 q[i + 0] = q0 * fcr - q1 * fci;
                 q[i + 1] = q0 * fci + q1 * fcr;
-                k[i + 0] = k0 * fcr - k1 * fci;
-                k[i + 1] = k0 * fci + k1 * fcr;
+                if h < N_KV_HEADS {
+                    let k = &mut s.k[h * HEAD_SIZE..];
+                    let k0 = k[i];
+                    let k1 = k[i + 1];
+                    k[i + 0] = k0 * fcr - k1 * fci;
+                    k[i + 1] = k0 * fci + k1 * fcr;
+                }
             }
         }
 
@@ -473,7 +476,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
         let value_cache_row = &mut s.value_cache[l][pos];
 
         for h in 0..N_KV_HEADS {
-            for d in 0..HEAD_SIZE/kv {
+            for d in 0..HEAD_SIZE {
                 key_cache_row[h][d] = s.k[h * HEAD_SIZE + d];
                 value_cache_row[h][d] = s.v[h * HEAD_SIZE + d];
             }
@@ -497,7 +500,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
                 // iterate over all timesteps, including the current one
                 for t in 0..=pos {
                     // get the key vector for this head and at this timestep
-                    let k = &s.key_cache[l][t][h];
+                    let k = &s.key_cache[l][t][h / kv];
                     // calculate the attention score as the dot product of q and k
                     let score = dot(q, k) / (HEAD_SIZE as fX).sqrt();
                     // save the score to the attention buffer
@@ -514,7 +517,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
                 }
                 for t in 0..=pos {
                     // get the value vector for this head and at this timestep
-                    let v = &s.value_cache[l][t][h];
+                    let v = &s.value_cache[l][t][h / kv];
                     // get the attention weight for this timestep
                     let a = att[t];
                     // accumulate the weighted value into xb
