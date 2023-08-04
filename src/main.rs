@@ -190,13 +190,13 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
         
         // W (d,n) @ x (n,) -> xout (d,)
         // by far the most amount of time is spent inside this little function
-        let mask = 1 << BITS - 1;
+        let mask = (1 << BITS) - 1;
+        let elems_per_i32 = 32 / BITS;
+        let i32_per_group = GROUPSIZE / 32 * BITS;
+
         xout.par_iter_mut()
             .enumerate()
             .for_each(|(oi, o): (usize, &mut f32)| {
-                let elems_per_i32 = 32 / BITS;
-                let i32_per_group = GROUPSIZE / 32 * BITS;
-
                 let out_elem = oi % elems_per_i32;
                 *o = 0.0;
                 let qweight = &self.qweight[oi];
@@ -206,7 +206,6 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
                 let mut in_pos = 0;
                 for (group, scale) in scales.into_iter().enumerate() {
                     let qz = (qzero[group] >> (BITS * out_elem)) & mask + 1;
-
                     for i in 0..i32_per_group {
                         let mut cur = qweight[group * i32_per_group + i];
                         for j in 0..elems_per_i32 {
