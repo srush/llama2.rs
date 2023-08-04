@@ -172,6 +172,7 @@ const fn int_div_up(x: usize, y: usize) -> usize {
 const BITS: usize = 4;
 const GROUPSIZE: usize = 128;
 
+#[repr(C)]
 struct QLinear<const IN: usize, const OUT: usize, const GROUPS: usize, 
               const ING: usize, const OUTG: usize> {
     qweight: [[i32; ING]; OUT],
@@ -188,38 +189,31 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
         assert_eq!(OUTG, OUT / 32 * BITS);
         assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
         
-        // W (d,n) @ x (n,) -> xout (d,)
-        // by far the most amount of time is spent inside this little function
         let mask = (1 << BITS) - 1;
         let elems_per_i32 = 32 / BITS;
-        let i32_per_group = GROUPSIZE / 32 * BITS;
-
+        let ipg : usize = GROUPSIZE / 32 * BITS;
         xout.par_iter_mut()
             .enumerate()
             .for_each(|(oi, o): (usize, &mut f32)| {
-                let out_elem = oi % elems_per_i32;
                 *o = 0.0;
-                let qweight = &self.qweight[oi];
-                let scales = &self.scales[oi];
-                let qzero = &self.qzeros[oi / 32 * BITS];
-
+                let qzero = &self.qzeros[oi / elems_per_i32];
+                let out_elem = oi % elems_per_i32;
+                
                 let mut in_pos = 0;
-                for (group, scale) in scales.into_iter().enumerate() {
-                    let qz = (qzero[group] >> (BITS * out_elem)) & mask + 1;
-                    for i in 0..i32_per_group {
-                        let mut cur = qweight[group * i32_per_group + i];
-                        for j in 0..elems_per_i32 {
-                            // Qw for group, i, j
-                            let qw = cur & mask + 1;
-                            cur = cur >> BITS;
-                            let weight = scale * ((qw - qz) as f32);
-                            *o += weight * x[in_pos];
-                            in_pos += 1;
-                            if in_pos == IN {
-                                return;
+                for (group, scale) in self.scales[oi].into_iter().enumerate() {
+                    let qz = ((qzero[group] >> (BITS * out_elem)) & mask) + 1;
+                    (self.qweight[oi][group * ipg..][..ipg]).into_iter().for_each(|v| {
+                        let mut cur: i32 = *v;
+                        (0..elems_per_i32).for_each(|_| {
+                            if in_pos < IN {
+                                let qw = (cur & mask);
+                                let weight = scale * ((qw - qz) as f32);
+                                *o += weight * x[in_pos];
+                                in_pos += 1;
+                                cur = cur >> BITS;
                             }
-                        }
-                    }
+                        })
+                    })
                 }
             });
     }
@@ -627,7 +621,7 @@ fn main() {
     io::stdout().flush().expect("flush failed");
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-    //assert_eq!(mmap.len(), mem::size_of::<TransformerWeights>());
+    assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
     let weights: Box<QTransformerWeights> =
         unsafe { Box::from_raw(mmap.as_ptr() as *mut QTransformerWeights) };
 

@@ -22,29 +22,39 @@ def export(model2, filepath='model.bin'):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(filepath, 'wb')
     p = {}
-
+    EXPAND = False
     model = model2.model.model
     p['n_layers'] = len(model.layers)
     print(model)
     def serialize(k):
         # print(f"writing {key}...")
+        w = None
         if isinstance(k, torch.Tensor):
             w = k
-        elif "GeneralQuantLinear" in str(k.__class__):
-            w = k.build().T
-        else:
+        elif "GeneralQuantLinear" in str(k.__class__) and EXPAND:
+            w = k.build()[0].T
+        
+        elif "GeneralQuantLinear" not in str(k.__class__):
             w = k.weight
-        print(w.shape)
-        t = w.contiguous().view(-1).detach().cpu().type(torch.float32).numpy()
-        print(t[:5])
-        f.write(memoryview(t))
+
+        if w is None:
+            for w in [k.qweight.type(torch.int32), k.qzeros.type(torch.int32), k.scales.type(torch.float32)]:
+                print(w.shape)
+                t = w.T.contiguous().view(-1).detach().cpu().numpy()
+                f.write(memoryview(t))
+        else:
+            print("regular")
+            print(w.shape)
+            t = w.contiguous().view(-1).detach().cpu().type(torch.float32).numpy()
+            f.write(memoryview(t))
+
         # del state_dict[key]
 
 
     # first write out the header
     p['n_heads'] = model.layers[0].self_attn.num_heads
-    hidden_dim = model.layers[0].mlp.up_proj.build().shape[1]
-    p['dim'] = model.layers[0].mlp.up_proj.build().shape[0]
+    hidden_dim = model.layers[0].mlp.up_proj.build()[0].shape[1]
+    p['dim'] = model.layers[0].mlp.up_proj.build()[0].shape[0]
 
     p['vocab_size'] = 32000
     p['max_seq_len'] = 2048
@@ -111,9 +121,10 @@ def export(model2, filepath='model.bin'):
 
 def load_and_export(model_path, output_path):
     from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-
-    model_name_or_path = "TheBloke/Llama-2-7B-GPTQ"
-    model_basename = "gptq_model-4bit-128g"
+    model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
+    model_basename = "gptq_model-4bit--1g"
+    # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
+    # model_basename = "main"
 
     use_triton = False
 
@@ -121,12 +132,15 @@ def load_and_export(model_path, output_path):
     model = AutoGPTQForCausalLM.from_quantized(model_name_or_path,
             model_basename=model_basename,
             use_safetensors=True,
+            revision="main",
             inject_fused_attention = False,
             inject_fused_mlp = False,
             trust_remote_code=True,
             device="cuda:0",
             use_triton=use_triton,
-            quantize_config=None
+                                               
+                                               quantize_config=None,
+                    
     )
 
 
