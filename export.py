@@ -1,15 +1,16 @@
 """
-This script exports the Llama 2 weights in llama2c.bin format.
+This script exports the AutoGPT-Q Llama 2 weights in llama2rs.bin format.
 """
 import os
 import sys
 import struct
 from pathlib import Path
 import json
-
 import torch
+from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
 
-# from model import precompute_freqs_cis
+
+
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
@@ -22,12 +23,11 @@ def export(model2, filepath='model.bin'):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(filepath, 'wb')
     p = {}
-    EXPAND = True
+    EXPAND = False
     model = model2.model.model
     p['n_layers'] = len(model.layers)
     print(model2.model)
     def serialize(k):
-        # print(f"writing {key}...")
         w = None
         if isinstance(k, torch.Tensor):
             w = k
@@ -39,11 +39,12 @@ def export(model2, filepath='model.bin'):
 
         if w is None:
             for w in [k.qweight.type(torch.int32), k.qzeros.type(torch.int32), k.scales.type(torch.float32)]:
+                print("Quant")
                 print(w.shape)
                 t = w.T.contiguous().view(-1).detach().cpu().numpy()
                 f.write(memoryview(t))
         else:
-            print("regular")
+            print("Regular")
             print(w.shape)
             t = w.contiguous().view(-1).detach().cpu().type(torch.float32).numpy()
             f.write(memoryview(t))
@@ -100,35 +101,16 @@ def export(model2, filepath='model.bin'):
     print(f"wrote {filepath}")
 
 
-# def concat_weights(models):
-#     state_dict = {}
-#     for name in list(models[0]):
-#         tensors = [model[name] for model in models]
-#         if len(tensors) == 1 or len(tensors[0].shape) == 1:
-#             state_dict[name] = tensors[0]
-#             continue
-#         is_axis_1 = (
-#             name.startswith('tok_embeddings.')
-#             or name.endswith('.attention.wo.weight')
-#             or name.endswith('.feed_forward.w2.weight')
-#         )
-#         axis = 1 if is_axis_1 else 0
-#         state_dict[name] = torch.cat(tensors, dim=axis)
-#         for model in models:
-#             del model[name]
-#     return state_dict
+model_name_or_path = "TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ"
+model_basename = "gptq_model-4bit-128g"
 
 
 def load_and_export(model_path, output_path):
-    from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-    model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
-    model_basename = "gptq_model-4bit--1g"
+
     # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
     # model_basename = "main"
 
     use_triton = False
-
-
     model = AutoGPTQForCausalLM.from_quantized(model_name_or_path,
             model_basename=model_basename,
             use_safetensors=True,
@@ -137,29 +119,16 @@ def load_and_export(model_path, output_path):
             inject_fused_mlp = False,
             trust_remote_code=True,
             device="cpu",
-            use_triton=use_triton,
-                                               
-                                               quantize_config=None,
+            use_triton=use_triton,                                   
+            quantize_config=None,
                     
     )
-
-    # params_path = os.path.join(model_path, 'params.json')
-    # with open(params_path) as f:
-    #     params = json.load(f)
-    #     print(params)
-
-    # model_paths = sorted(list(Path(model_path).glob('consolidated.*.pth')))
-    # models = [torch.load(p, map_location='cpu') for p in model_paths]
-    # state_dict = concat_weights(models)
-    # del models
     export(model, output_path)
-
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-        print('[Llama model folder path] [output path]')
+        print('[output path]')
         exit()
 
-    model_path = sys.argv[1]
-    output_path = sys.argv[2]
+    output_path = sys.argv[1]
     load_and_export(model_path, output_path)
