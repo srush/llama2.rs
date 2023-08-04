@@ -1,0 +1,28 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug with LLDB",
+            "type": "lldb",
+            "request": "launch",
+            // The following configuration option, 'program', may in some cases need to be modified. 
+            // This is so that the correct executable is targeted.
+            // For example, on non-Windows systems, the ".exe" suffix must be removed. 
+            // Alternatively, the directory that rustc/cargo outputs debug builds may change in future
+            // As such, this path would have to change accordingly.
+            "program": "${workspaceFolder}/target/debug/llama2_rs",
+            // If you wish to supply arguments/parameters to the program, supply them below:
+            "args": ["q70b.bin"],
+            // Working folder for execution. Change as necessary if program requires a different value:
+            "cwd": "${workspaceFolder}",
+            "terminal": "external",
+            "stopOnEntry": false,
+            // Instructs LLVM to apply special Rust-language-specific functionality to its analysis:
+            "sourceLanguages": ["rust"]
+        } 
+
+    ]
+}
