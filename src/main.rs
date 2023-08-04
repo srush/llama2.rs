@@ -165,6 +165,66 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
     }
 }
 
+const fn int_div_up(x: usize, y: usize) -> usize {
+    x / y + if x % y == 0 { 0 } else { 1 }
+}
+
+const BITS: usize = 4;
+const GROUPSIZE: usize = 128;
+
+struct QLinear<const IN: usize, const OUT: usize, const GROUPS: usize, 
+              const ING: usize, const OUTG: usize> {
+    qweight: [[i32; ING]; OUT],
+    qzeros: [[i32; GROUPS]; OUTG],
+    scales: [[f32; GROUPS]; OUT],
+}
+
+impl <const IN: usize, const OUT: usize, const GROUPS: usize, 
+    const ING: usize, const OUTG: usize>
+    QLinear<IN, OUT, GROUPS, ING, OUTG> {
+
+    fn matvec(self: &Self, xout: &mut [fX; OUT], x: &[fX; IN]) {
+        assert_eq!(ING, IN / 32 * BITS);
+        assert_eq!(OUTG, OUT / 32 * BITS);
+        assert_eq!(GROUPS, int_div_up(OUT, GROUPSIZE));
+        
+        // W (d,n) @ x (n,) -> xout (d,)
+        // by far the most amount of time is spent inside this little function
+        let mask = 1 << BITS - 1;
+        xout.par_iter_mut()
+            .enumerate()
+            .for_each(|(oi, o): (usize, &mut f32)| {
+                let elems_per_i32 = 32 / BITS;
+                let out_elem = oi % elems_per_i32;
+                *o = 0.0;
+                let qweight = &self.qweight[oi];
+                let scales = &self.scales[oi];
+                let qzero = &self.qzeros[oi / 32 * BITS];
+
+                let mut in_pos = 0;
+                for (group, scale) in scales.into_iter().enumerate() {
+                    let qz = (qzero[group] >> (BITS * out_elem)) & mask + 1;
+                    let weights_per_group = GROUPSIZE / 32 * BITS;
+                    for i in 0..weights_per_group {
+                        let mut cur = qweight[group * GROUPSIZE + i];
+                        for j in 0..elems_per_i32 {
+                            // Qw for group, i, j
+                            let qw = cur & mask + 1;
+                            cur = cur >> BITS;
+                            let weight = scale * ((qw - qz) as f32);
+                            *o += weight * x[in_pos];
+                            in_pos += 1;
+                            if in_pos == x.len() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+    }
+}
+
+
 #[repr(C)]
 struct TransformerWeights {
     // token embedding table
@@ -190,6 +250,41 @@ struct TransformerWeights {
     // (optional) classifier weights for the logits, on the last layer
     wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
 }
+
+const DIM_GROUPS : usize = int_div_up(DIM, GROUPSIZE);
+const HDIM_GROUPS : usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
+const DIM_G : usize = DIM / 32 * BITS;
+const HDIM_G : usize = HIDDEN_DIM / 32 * BITS;
+
+type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
+
+
+#[repr(C)]
+struct QTransformerWeights {
+    // token embedding table
+    token_embedding_table: [[fX; DIM]; VOCAB_SIZE], // (vocab_size, dim)
+    // weights for rmsnorms
+    rms_att_weight: [[fX; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
+    // weights for matmuls
+    wq: Att, // (layer, dim, dim)
+    wk: Att, // (layer, dim, dim)
+    wv: Att, // (layer, dim, dim)
+    wo: Att, // (layer, dim, dim)
+
+    rms_ffn_weight: [[fX; DIM]; N_LAYERS], // (layer, dim)
+    // weights for ffn
+    w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+    w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
+    w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+    // final rmsnorm
+    rms_final_weight: [fX; DIM], // (dim,)
+    // freq_cis for RoPE relatively positional embeddings
+    freq_cis_real: [[fX; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
+    freq_cis_imag: [[fX; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
+    // (optional) classifier weights for the logits, on the last layer
+    wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
+}
+
 
 type Token = usize;
 
@@ -319,7 +414,7 @@ fn dot(q: &[fX], k: &[fX]) -> fX {
         .sum::<fX>()
 }
 
-fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TransformerWeights) {
+fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeights) {
     // a few convenience variables
     let x = &mut s.x;
 
@@ -532,8 +627,8 @@ fn main() {
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
     //assert_eq!(mmap.len(), mem::size_of::<TransformerWeights>());
-    let weights: Box<TransformerWeights> =
-        unsafe { Box::from_raw(mmap.as_ptr() as *mut TransformerWeights) };
+    let weights: Box<QTransformerWeights> =
+        unsafe { Box::from_raw(mmap.as_ptr() as *mut QTransformerWeights) };
 
     // right now we cannot run for more than config.seq_len steps
     if steps <= 0 || steps > config.seq_len {
