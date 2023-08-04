@@ -25,7 +25,8 @@ def export(model2, filepath='model.bin'):
     EXPAND = False
     model = model2.model.model
     p['n_layers'] = len(model.layers)
-    print(model)
+    print(model2.model)
+    exit()
     def serialize(k):
         # print(f"writing {key}...")
         w = None
@@ -122,7 +123,7 @@ def export(model2, filepath='model.bin'):
 def load_and_export(model_path, output_path):
     from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
     model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
-    model_basename = "gptq_model-4bit-128g"
+    model_basename = "gptq_model-4bit--1g"
     # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
     # model_basename = "main"
 

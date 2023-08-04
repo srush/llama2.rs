@@ -36,9 +36,10 @@ use std::{env, io};
 // Llama 70B
 const DIM: usize = 8192;
 const HIDDEN_DIM: usize = 28672;
+const KV_DIM: usize = DIM / 8;
 const N_LAYERS: usize = 80;
 const N_HEADS: usize = 64;
-const N_KV_HEADS: usize = 64;
+const N_KV_HEADS: usize = N_HEADS / 8;
 const SEQ_LEN: usize = 2048;
 const VOCAB_SIZE: usize = 32000;
 const SHARED_SIZE: usize = 32000;
@@ -134,8 +135,8 @@ struct RunState {
     hb: [fX; HIDDEN_DIM],     // buffer for hidden dimension in the ffn (hidden_dim,)
     hb2: [fX; HIDDEN_DIM],    // buffer for hidden dimension in the ffn (hidden_dim,)
     q: [fX; DIM],             // query (dim,)
-    k: [fX; DIM],             // key (dim,)
-    v: [fX; DIM],             // value (dim,)
+    k: [fX; KV_DIM],             // key (dim,)
+    v: [fX; KV_DIM],             // value (dim,)
     att: Vec<[fX; SEQ_LEN]>,  // buffer for scores/attention values (n_heads, seq_len)
     logits: [fX; VOCAB_SIZE], // output logits
     // kv cache
@@ -152,8 +153,8 @@ impl RunState {
             hb: [0.0; HIDDEN_DIM],
             hb2: [0.0; HIDDEN_DIM],
             q: [0.0; DIM],
-            k: [0.0; DIM],
-            v: [0.0; DIM],
+            k: [0.0; KV_DIM],
+            v: [0.0; KV_DIM],
             att: vec![[0.0; SEQ_LEN]; N_HEADS],
             logits: [0.0; VOCAB_SIZE],
             key_cache: vec![vec![[[0.0; HEAD_SIZE]; N_HEADS]; SEQ_LEN]; N_LAYERS],
@@ -265,10 +266,11 @@ struct TransformerWeights {
 const DIM_GROUPS : usize = int_div_up(DIM, GROUPSIZE);
 const HDIM_GROUPS : usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
 const DIM_G : usize = DIM / 32 * BITS;
+const KV_DIM_G : usize = KV_DIM / 32 * BITS;
 const HDIM_G : usize = HIDDEN_DIM / 32 * BITS;
 
 type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
-
+type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
 
 #[repr(C)]
 struct QTransformerWeights {
@@ -278,8 +280,8 @@ struct QTransformerWeights {
     rms_att_weight: [[fX; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
     // weights for matmuls
     wq: Att, // (layer, dim, dim)
-    wk: Att, // (layer, dim, dim)
-    wv: Att, // (layer, dim, dim)
+    wk: AttKV, // (layer, dim, dim)
+    wv: AttKV, // (layer, dim, dim)
     wo: Att, // (layer, dim, dim)
 
     rms_ffn_weight: [[fX; DIM]; N_LAYERS], // (layer, dim)
@@ -435,7 +437,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
     let freq_cis_real_row = &w.freq_cis_real[pos];
     let freq_cis_imag_row = &w.freq_cis_imag[pos];
-
+    let kv = 8;
     // forward all the layers
     for l in 0..N_LAYERS {
         // attention rmsnorm
@@ -450,7 +452,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
         for h in 0..N_HEADS {
             // get the q and k vectors for this head
             let q = &mut s.q[h * HEAD_SIZE..];
-            let k = &mut s.k[h * HEAD_SIZE..];
+            let k = &mut s.k[h / kv * HEAD_SIZE..];
             // rotate q and k by the freq_cis_real and freq_cis_imag
             for i in (0..HEAD_SIZE).step_by(2) {
                 let q0 = q[i];
@@ -469,8 +471,9 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &QTransformerWeigh
         // save key,value at this time step (pos) to our kv cache
         let key_cache_row = &mut s.key_cache[l][pos];
         let value_cache_row = &mut s.value_cache[l][pos];
-        for h in 0..N_HEADS {
-            for d in 0..HEAD_SIZE {
+
+        for h in 0..N_KV_HEADS {
+            for d in 0..HEAD_SIZE/kv {
                 key_cache_row[h][d] = s.k[h * HEAD_SIZE + d];
                 value_cache_row[h][d] = s.v[h * HEAD_SIZE + d];
             }
@@ -637,7 +640,7 @@ fn main() {
     io::stdout().flush().expect("flush failed");
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-    // assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
+    assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
     let weights: Box<QTransformerWeights> =
         unsafe { Box::from_raw(mmap.as_ptr() as *mut QTransformerWeights) };
 
