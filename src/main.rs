@@ -195,6 +195,8 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
             .enumerate()
             .for_each(|(oi, o): (usize, &mut f32)| {
                 let elems_per_i32 = 32 / BITS;
+                let i32_per_group = GROUPSIZE / 32 * BITS;
+
                 let out_elem = oi % elems_per_i32;
                 *o = 0.0;
                 let qweight = &self.qweight[oi];
@@ -204,9 +206,9 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
                 let mut in_pos = 0;
                 for (group, scale) in scales.into_iter().enumerate() {
                     let qz = (qzero[group] >> (BITS * out_elem)) & mask + 1;
-                    let weights_per_group = GROUPSIZE / 32 * BITS;
-                    for i in 0..weights_per_group {
-                        let mut cur = qweight[group * GROUPSIZE + i];
+
+                    for i in 0..i32_per_group {
+                        let mut cur = qweight[group * i32_per_group + i];
                         for j in 0..elems_per_i32 {
                             // Qw for group, i, j
                             let qw = cur & mask + 1;
@@ -214,7 +216,7 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
                             let weight = scale * ((qw - qz) as f32);
                             *o += weight * x[in_pos];
                             in_pos += 1;
-                            if in_pos == x.len() {
+                            if in_pos == IN {
                                 return;
                             }
                         }
