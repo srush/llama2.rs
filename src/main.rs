@@ -186,7 +186,7 @@ impl <const IN: usize, const OUT: usize, const GROUPS: usize,
     fn matvec(self: &Self, xout: &mut [fX; OUT], x: &[fX; IN]) {
         assert_eq!(ING, IN / 32 * BITS);
         assert_eq!(OUTG, OUT / 32 * BITS);
-        assert_eq!(GROUPS, int_div_up(OUT, GROUPSIZE));
+        assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
         
         // W (d,n) @ x (n,) -> xout (d,)
         // by far the most amount of time is spent inside this little function
