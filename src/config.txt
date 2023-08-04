@@ -1,0 +1,38 @@
+// Profile stories 15M
+// const DIM: usize = 288;
+// const HIDDEN_DIM: usize = 768;
+// const N_LAYERS: usize = 6;
+// const N_HEADS: usize = 6;
+// const N_KV_HEADS: usize = 6;
+// const SEQ_LEN: usize = 256;
+// const VOCAB_SIZE: usize = 32000;
+// const SHARED_SIZE: usize = 0;
+// const HEAD_SIZE: usize = DIM / N_HEADS;
+
+// Llama 7B
+// const DIM: usize = 4096;
+// const HIDDEN_DIM: usize = 11008;
+// const N_LAYERS: usize = 32;
+// const N_HEADS: usize = 32;
+// const N_KV_HEADS: usize = 32;
+// const SEQ_LEN: usize = 2048;
+// const VOCAB_SIZE: usize = 32000;
+// const SHARED_SIZE: usize = 32000;
+// const HEAD_SIZE: usize = DIM / N_HEADS;
+
+// Configuration: Config { dim: 5120, hidden_dim: 13824, n_layers: 40, n_heads: 40, n_kv_heads: 40, vocab_size: 32000, seq_len: 2048, shared_weight: false }
+// Llama 13B
+
+// const DIM: usize = 5120;
+// const HIDDEN_DIM: usize = 13824;
+// const KV_DIM: usize = DIM;
+// const ATTN_GROUPS: usize = 1;
+// const N_LAYERS: usize = 40;
+// const N_HEADS: usize = 40;
+// const N_KV_HEADS: usize = N_HEADS;
+// const SEQ_LEN: usize = 2048;
+// const VOCAB_SIZE: usize = 32000;
+// const SHARED_SIZE: usize = 32000;
+// const HEAD_SIZE: usize = DIM / N_HEADS;
+// const BITS: usize = 4;
+// const GROUPSIZE: usize = 128;
