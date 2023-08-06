@@ -18,7 +18,7 @@ To build:
 To get model (loads [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)):
 
 ```
-pip install torch transformers [auto-gptq](https://github.com/PanQiWei/AutoGPTQ)
+pip install torch transformers auto-gptq
 python export.py llama2-70b-q.bin
 ```
 
