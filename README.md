@@ -7,6 +7,8 @@ This is a one-file Rust implementation of Llama2. Originally, a Rust port of Kar
 * Memory mapping, loads 70B instantly.
 * Static size checks, no pointers
 
+There is also a faster version with SIMD enabled in the SIMD branch, but it requires Rust +nightly to run.
+
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
 To build:
@@ -18,7 +20,7 @@ To build:
 To get model (loads [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)):
 
 ```
-pip install torch transformers [auto-gptq](https://github.com/PanQiWei/AutoGPTQ)
+pip install torch transformers auto-gptq
 python export.py llama2-70b-q.bin
 ```
 
@@ -82,8 +84,7 @@ There are two dependencies:
 * `memmap2`for memory mapping
 * `rayon` for parallel computation.
 
-Todo: 
-* [ ] - Faster matrix multiplications
+* SIMD enabled support with +nightly.
 
 
 ### Why? 
