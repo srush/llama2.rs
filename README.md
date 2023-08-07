@@ -3,18 +3,18 @@
 This is a one-file Rust implementation of Llama2. Originally, a Rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c) but now has a bunch more features to make it scale to 70B:
 
 * Support for 4-bit GPT-Q Quantization
+* SIMD support for fast CPU inference
 * Support for Grouped Query Attention (needed for big Llamas)
 * Memory mapping, loads 70B instantly.
 * Static size checks, no pointers
 
-There is also a faster version with SIMD enabled in the SIMD branch, but it requires Rust +nightly to run.
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
-To build:
+To build (requires +nightly to use SIMD):
 
 ```
-> cargo build --release
+> cargo +nightly build --release
 ```
 
 To get model (loads [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)):
@@ -32,12 +32,21 @@ Configuration: Config { dim: 8192, hidden_dim: 28672, n_layers: 80, n_heads: 64,
 ht: false }                                                                                                                                   
 <s> 
 The only thing that I can think of is that the          
-achieved tok/s: 0.060693607
+achieved tok/s: 0.89155835
 ```
 
 Honestly, not so bad for running on my GPU machine, significantly faster than llama.c. 
 
-Here's a run of 7B non-quantized:
+Here's a run of 13B quantized:
+
+```
+> target/release/llama2_rs llama2_7b.bin 0.0 11 "One thing is that"
+One thing is that the 100% of the people who are in the 1%
+achieved tok/s: 4.027984
+```
+
+
+Here's a run of 7B non-quantized (this is less optimized):
 
 ```
 > target/release/llama2_rs llama2_7b.bin 0.0 11 "The only thing"

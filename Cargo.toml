@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 memmap2 = "0.7"
 rayon = "1.5"
+
+[profile.release]
+debug = true
