@@ -101,7 +101,7 @@ def export(model2, filepath='model.bin'):
     print(f"wrote {filepath}")
 
 
-model_name_or_path = "TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ"
+model_name_or_path = "TheBloke/llama-2-7b-Guanaco-QLoRA-GPTQ"
 model_basename = "gptq_model-4bit-128g"
 
 
@@ -131,4 +131,4 @@ if __name__ == '__main__':
         exit()
 
     output_path = sys.argv[1]
-    load_and_export(model_path, output_path)
+    load_and_export("", output_path)

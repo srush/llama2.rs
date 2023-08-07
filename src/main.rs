@@ -1,6 +1,6 @@
 #![feature(portable_simd)]
 
-use std::simd::{f32x16, i32x16, Mask, SimdFloat, SimdInt};
+use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
 // This is a conversion of llama2.c to rust.
 // It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
@@ -12,22 +12,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 
 // Configuration for Llama 70B. Others in config.txt
-// const DIM: usize = 8192;
-// const HIDDEN_DIM: usize = 28672;
-// const ATTN_GROUPS: usize = 8;
-// const N_LAYERS: usize = 80;
-// const N_HEADS: usize = 64;
+const DIM: usize = 8192;
+const HIDDEN_DIM: usize = 28672;
+const ATTN_GROUPS: usize = 8;
+const N_LAYERS: usize = 80;
+const N_HEADS: usize = 64;
+const SEQ_LEN: usize = 2048;
+const VOCAB_SIZE: usize = 32000;
+
+// Llama 13B
+// const DIM: usize = 5120;
+// const HIDDEN_DIM: usize = 13824;
+// const ATTN_GROUPS: usize = 1;
+// const N_LAYERS: usize = 40;
+// const N_HEADS: usize = 40;
 // const SEQ_LEN: usize = 2048;
 // const VOCAB_SIZE: usize = 32000;
 
-// Llama 13B
-const DIM: usize = 5120;
-const HIDDEN_DIM: usize = 13824;
-const ATTN_GROUPS: usize = 1;
-const N_LAYERS: usize = 40;
-const N_HEADS: usize = 40;
-const SEQ_LEN: usize = 2048;
-const VOCAB_SIZE: usize = 32000;
+// Llama 7B
+// const DIM: usize = 4096;
+// const HIDDEN_DIM: usize = 11008;
+// const N_LAYERS: usize = 32;
+// const ATTN_GROUPS: usize = 1;
+// const N_HEADS: usize = 32;
+// const SEQ_LEN: usize = 2048;
+// const VOCAB_SIZE: usize = 32000;
 
 // Grouped Query Attention
 const KV_DIM: usize = DIM / ATTN_GROUPS;
@@ -209,20 +218,16 @@ impl<
         let mask = (1 << BITS) - 1;
         let elems_per_i32 = 32 / BITS;
         let ipg: usize = GROUPSIZE / 32 * BITS;
-        let mask_4bits = i32x16::splat(mask);
-        let shift_right =
-            i32x16::from_array([0, 4, 8, 12, 16, 20, 24, 28, 0, 4, 8, 12, 16, 20, 24, 28]);
-        let mask_16 = Mask::from_array([
-            true, true, true, true, true, true, true, true, false, false, false, false, false,
-            false, false, false,
-        ]);
+        let mask_4bits = i32x8::splat(mask);
+        let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
 
         xout.par_iter_mut()
             .enumerate()
             .for_each(|(oi, o): (usize, &mut f32)| {
                 *o = 0.0;
                 // Do K at a time
-                let mut collect = f32x16::splat(0.0);
+                let zero = f32x8::splat(0.0);
+                let mut collect = f32x8::splat(0.0);
                 let qzeros = &self.qzeros[oi / elems_per_i32];
                 let out_elem = oi % elems_per_i32;
                 let qweight = self.qweight[oi].chunks(ipg);
@@ -234,28 +239,23 @@ impl<
                     .enumerate()
                     .for_each(|(group, (scale, qweight))| {
                         let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
-                        let scale_simd = f32x16::splat(scale);
-                        let zero_simd: i32x16 = i32x16::splat(qz);
-                        let xs = x[in_pos..in_pos + GROUPSIZE]
-                            .chunks(16)
-                            .map(f32x16::from_slice);
+                        let scale_simd = f32x8::splat(scale);
+                        let zero_simd = i32x8::splat(qz);
+                        let xs = x[in_pos..in_pos + GROUPSIZE].chunks(8);
                         in_pos += GROUPSIZE;
-                        let qweight = qweight.chunks(2);
                         collect += qweight
                             .into_iter()
                             .zip(xs)
                             .map(|(v, x)| {
                                 //Extract v into 8 chunks
-                                let num_simd1 = i32x16::splat(v[0]);
-                                let num_simd2 = i32x16::splat(v[1]);
-                                let num_simd = mask_16.select(num_simd1, num_simd2);
-                                let qw: i32x16 = (num_simd >> shift_right) & mask_4bits;
-                                let combine: f32x16 = (qw - zero_simd).cast::<f32>();
-                                let weight: f32x16 = scale_simd * combine;
+                                let x = f32x8::from_slice(x);
+                                let num_simd = i32x8::splat(*v);
+                                let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
+                                let combine: f32x8 = (qw - zero_simd).cast::<f32>();
+                                let weight: f32x8 = scale_simd * combine;
                                 weight * x
                             })
-                            .reduce(|x, y| x + y)
-                            .unwrap();
+                            .fold(zero, |x, y| x + y);
                     });
                 *o += collect.reduce_sum();
             });
