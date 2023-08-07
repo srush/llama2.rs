@@ -1,6 +1,6 @@
 # llama2.rs
 
-This is a one-file Rust implementation of Llama2. Originally, a Rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c) but now has a bunch more features to make it scale to 70B:
+This is a one-file Rust implementation of Llama2. 
 
 * Support for 4-bit GPT-Q Quantization
 * SIMD support for fast CPU inference
@@ -8,10 +8,11 @@ This is a one-file Rust implementation of Llama2. Originally, a Rust port of Kar
 * Memory mapping, loads 70B instantly.
 * Static size checks, no pointers
 
+Can run up on *1 tok/s* 70B Llama2.
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
-To build (requires +nightly to use SIMD):
+To build (requires +nightly to use SIMD, get with rustup):
 
 ```
 > cargo +nightly build --release
@@ -27,9 +28,7 @@ python export.py llama2-70b-q.bin
 To run:
 
 ```
-> target/release/llama2_rs llama2-70b-q.bin 0.0 11 "The only thing"
-Configuration: Config { dim: 8192, hidden_dim: 28672, n_layers: 80, n_heads: 64, n_kv_heads: 64, vocab_size: 32000, seq_len: 2048, shared_weig
-ht: false }                                                                                                                                   
+> target/release/llama2_rs llama2-70b-q.bin 0.0 11 "The only thing"                                                                                                                                 
 The only thing that I can think of is that the          
 achieved tok/s: 0.89155835
 ```
@@ -43,7 +42,6 @@ Here's a run of 13B quantized:
 One thing is that the 100% of the people who are in the 1%
 achieved tok/s: 4.027984
 ```
-
 
 Here's a run of 7B non-quantized (this is less optimized):
 
@@ -80,6 +78,10 @@ const GROUPSIZE: usize = 128;
 
 ### See Also
 
+Originally, a Rust port of Karpathy's [llama2.c](https://github.com/karpathy/llama2.c) but now has a bunch more features to make it scale to 70B.
+
+Also check out:
+
 * [llama2.rs](https://github.com/gaxler/llama2.rs) from @gaxler 
 * [llama2.rs](https://github.com/leo-du/llama2.rs) from @leo-du
 * [candle](https://github.com/LaurentMazare/candle) and candle llama from @LaurentMazare
@@ -91,7 +93,6 @@ Started as a port of the original code, with extra type information to make it e
 There are two dependencies: 
 * `memmap2`for memory mapping
 * `rayon` for parallel computation.
-
 * SIMD enabled support with +nightly.
 
 
