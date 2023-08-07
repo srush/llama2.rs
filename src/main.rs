@@ -1,6 +1,6 @@
 #![feature(portable_simd)]
-use std::simd::{f32x4, i32x4, i32x8, f32x8, SimdInt, SimdFloat, i32x16, f32x16, Mask};
-use std::str::from_utf8_unchecked;
+
+use std::simd::{SimdInt, SimdFloat, i32x16, f32x16, Mask};
 // This is a conversion of llama2.c to rust.
 // It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
@@ -59,7 +59,7 @@ fn read_float(file: &mut File) -> f32 {
 fn read_str(file: &mut File, len: usize) -> String {
     let mut buf: Vec<u8> = vec![0u8; len];
     file.read_exact(&mut buf).unwrap();
-    unsafe { from_utf8_unchecked(&buf).to_owned() }
+    std::str::from_utf8(&buf).unwrap().to_owned()
 }
 
 fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
@@ -238,17 +238,17 @@ impl<
                         .chunks(16).map(f32x16::from_slice);
                     in_pos += GROUPSIZE;
                     let qweight = qweight.chunks(2);
-                    qweight.into_iter().zip(xs).for_each(|(v, x)| {
-                        // Extract v into 8 chunks
+                    collect += qweight.into_iter().zip(xs).map(|(v, x)| {
+                        //Extract v into 8 chunks
                         let num_simd1 = i32x16::splat(v[0]);
                         let num_simd2 = i32x16::splat(v[1]);
                         let num_simd = mask_16.select(num_simd1, num_simd2);
                         let qw: i32x16 = (num_simd >> shift_right) & mask_4bits;
                         let combine: f32x16 = (qw - zero_simd).cast::<f32>();
                         let weight: f32x16 = scale_simd * combine;
-                        let mul: f32x16 = weight * x;
-                        collect += mul;
-                    });
+                        weight * x
+                    }).reduce(|x, y| x + y).unwrap();
+
                 });
                 *o += collect.reduce_sum();
             });
@@ -661,7 +661,9 @@ fn main() {
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
     assert_eq!(mmap.len(), mem::size_of::<TWeights>());
-    let weights: Box<TWeights> = unsafe { Box::from_raw(mmap.as_ptr() as *mut TWeights) };
+    // let mut content = Vec::new();
+    // file.read_to_end(&mut content);
+    let weights: &'static TWeights = unsafe { &*(mmap.as_ptr() as *const TWeights) };
 
     // right now we cannot run for more than config.seq_len steps
     if steps <= 0 || steps > config.seq_len {
@@ -737,6 +739,4 @@ fn main() {
         (steps - 1) as fx / (end - start) as fx * 1000.0
     );
 
-    // Don't free weights, they're mmapped.
-    mem::forget(weights);
 }
