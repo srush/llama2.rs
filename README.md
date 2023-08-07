@@ -8,15 +8,18 @@ This is a one-file Rust implementation of Llama2.
 * Memory mapping, loads 70B instantly.
 * Static size checks, no pointers
 
-Can run up on *1 tok/s* 70B Llama2.
+Can run up on *1 tok/s* 70B Llama2. (intel i9 with avx512) 
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
 To build (requires +nightly to use SIMD, get with rustup):
 
 ```
+> rustup toolchain install nightly # to get nightly
 > cargo +nightly build --release
 ```
+
+If you get an error you may need to change .cargo/config to match your chipset. Looks for AVX512 by default.
 
 To get model (loads [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)):
 
