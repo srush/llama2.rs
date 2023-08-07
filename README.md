@@ -30,7 +30,6 @@ To run:
 > target/release/llama2_rs llama2-70b-q.bin 0.0 11 "The only thing"
 Configuration: Config { dim: 8192, hidden_dim: 28672, n_layers: 80, n_heads: 64, n_kv_heads: 64, vocab_size: 32000, seq_len: 2048, shared_weig
 ht: false }                                                                                                                                   
-<s> 
 The only thing that I can think of is that the          
 achieved tok/s: 0.89155835
 ```
