@@ -1,6 +1,6 @@
 #![feature(portable_simd)]
 
-use std::simd::{SimdInt, SimdFloat, i32x16, f32x16, Mask};
+use std::simd::{f32x16, i32x16, Mask, SimdFloat, SimdInt};
 // This is a conversion of llama2.c to rust.
 // It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
@@ -210,13 +210,13 @@ impl<
         let elems_per_i32 = 32 / BITS;
         let ipg: usize = GROUPSIZE / 32 * BITS;
         let mask_4bits = i32x16::splat(mask);
-        let shift_right = i32x16::from_array(
-            [0, 4, 8, 12, 16, 20, 24, 28,
-             0, 4, 8, 12, 16, 20, 24, 28]);
+        let shift_right =
+            i32x16::from_array([0, 4, 8, 12, 16, 20, 24, 28, 0, 4, 8, 12, 16, 20, 24, 28]);
         let mask_16 = Mask::from_array([
-            true, true, true, true, true, true, true, true, 
-            false, false, false, false, false, false, false, false]);
-        
+            true, true, true, true, true, true, true, true, false, false, false, false, false,
+            false, false, false,
+        ]);
+
         xout.par_iter_mut()
             .enumerate()
             .for_each(|(oi, o): (usize, &mut f32)| {
@@ -228,28 +228,35 @@ impl<
                 let qweight = self.qweight[oi].chunks(ipg);
 
                 let mut in_pos = 0;
-                self.scales[oi].into_iter().zip(qweight).enumerate()
-                               .for_each(|(group, (scale, qweight))| {
-
-                    let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
-                    let scale_simd = f32x16::splat(scale);
-                    let zero_simd: i32x16 = i32x16::splat(qz);
-                    let xs = x[in_pos..in_pos + GROUPSIZE]
-                        .chunks(16).map(f32x16::from_slice);
-                    in_pos += GROUPSIZE;
-                    let qweight = qweight.chunks(2);
-                    collect += qweight.into_iter().zip(xs).map(|(v, x)| {
-                        //Extract v into 8 chunks
-                        let num_simd1 = i32x16::splat(v[0]);
-                        let num_simd2 = i32x16::splat(v[1]);
-                        let num_simd = mask_16.select(num_simd1, num_simd2);
-                        let qw: i32x16 = (num_simd >> shift_right) & mask_4bits;
-                        let combine: f32x16 = (qw - zero_simd).cast::<f32>();
-                        let weight: f32x16 = scale_simd * combine;
-                        weight * x
-                    }).reduce(|x, y| x + y).unwrap();
-
-                });
+                self.scales[oi]
+                    .into_iter()
+                    .zip(qweight)
+                    .enumerate()
+                    .for_each(|(group, (scale, qweight))| {
+                        let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
+                        let scale_simd = f32x16::splat(scale);
+                        let zero_simd: i32x16 = i32x16::splat(qz);
+                        let xs = x[in_pos..in_pos + GROUPSIZE]
+                            .chunks(16)
+                            .map(f32x16::from_slice);
+                        in_pos += GROUPSIZE;
+                        let qweight = qweight.chunks(2);
+                        collect += qweight
+                            .into_iter()
+                            .zip(xs)
+                            .map(|(v, x)| {
+                                //Extract v into 8 chunks
+                                let num_simd1 = i32x16::splat(v[0]);
+                                let num_simd2 = i32x16::splat(v[1]);
+                                let num_simd = mask_16.select(num_simd1, num_simd2);
+                                let qw: i32x16 = (num_simd >> shift_right) & mask_4bits;
+                                let combine: f32x16 = (qw - zero_simd).cast::<f32>();
+                                let weight: f32x16 = scale_simd * combine;
+                                weight * x
+                            })
+                            .reduce(|x, y| x + y)
+                            .unwrap();
+                    });
                 *o += collect.reduce_sum();
             });
     }
@@ -738,5 +745,4 @@ fn main() {
         "\nachieved tok/s: {}",
         (steps - 1) as fx / (end - start) as fx * 1000.0
     );
-
 }
