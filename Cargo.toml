@@ -11,3 +11,6 @@ rayon = "1.5"
 
 [profile.release]
 debug = true
+
+[features]
+model_size = []

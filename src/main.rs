@@ -12,31 +12,43 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 
 // Configuration for Llama 70B. Others in config.txt
-// const DIM: usize = 8192;
-// const HIDDEN_DIM: usize = 28672;
-// const ATTN_GROUPS: usize = 8;
-// const N_LAYERS: usize = 80;
-// const N_HEADS: usize = 64;
-// const SEQ_LEN: usize = 2048;
-// const VOCAB_SIZE: usize = 32000;
+// set these configuration options using .cargo/config
+#[cfg(model_size="70B")]
+mod constants {
+    pub const DIM: usize = 8192;
+    pub const HIDDEN_DIM: usize = 28672;
+    pub const ATTN_GROUPS: usize = 8;
+    pub const N_LAYERS: usize = 80;
+    pub const N_HEADS: usize = 64;
+    pub const SEQ_LEN: usize = 2048;
+    pub const VOCAB_SIZE: usize = 32000;
+}
 
 // Llama 13B
-const DIM: usize = 5120;
-const HIDDEN_DIM: usize = 13824;
-const ATTN_GROUPS: usize = 1;
-const N_LAYERS: usize = 40;
-const N_HEADS: usize = 40;
-const SEQ_LEN: usize = 2048;
-const VOCAB_SIZE: usize = 32000;
+#[cfg(model_size="13B")]
+mod constants {
+    pub const DIM: usize = 5120;
+    pub const HIDDEN_DIM: usize = 13824;
+    pub const ATTN_GROUPS: usize = 1;
+    pub const N_LAYERS: usize = 40;
+    pub const N_HEADS: usize = 40;
+    pub const SEQ_LEN: usize = 2048;
+    pub const VOCAB_SIZE: usize = 32000;
+}
 
 // Llama 7B
-// const DIM: usize = 4096;
-// const HIDDEN_DIM: usize = 11008;
-// const N_LAYERS: usize = 32;
-// const ATTN_GROUPS: usize = 1;
-// const N_HEADS: usize = 32;
-// const SEQ_LEN: usize = 2048;
-// const VOCAB_SIZE: usize = 32000;
+#[cfg(model_size="7B")]
+mod constants {
+    pub const DIM: usize = 4096;
+    pub const HIDDEN_DIM: usize = 11008;
+    pub const N_LAYERS: usize = 32;
+    pub const ATTN_GROUPS: usize = 1;
+    pub const N_HEADS: usize = 32;
+    pub const SEQ_LEN: usize = 2048;
+    pub const VOCAB_SIZE: usize = 32000;
+}
+
+use constants::{DIM, HIDDEN_DIM, ATTN_GROUPS, N_LAYERS, N_HEADS, SEQ_LEN, VOCAB_SIZE};
 
 // Grouped Query Attention
 const KV_DIM: usize = DIM / ATTN_GROUPS;
