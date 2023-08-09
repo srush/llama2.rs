@@ -12,22 +12,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 
 // Configuration for Llama 70B. Others in config.txt
-const DIM: usize = 8192;
-const HIDDEN_DIM: usize = 28672;
-const ATTN_GROUPS: usize = 8;
-const N_LAYERS: usize = 80;
-const N_HEADS: usize = 64;
-const SEQ_LEN: usize = 2048;
-const VOCAB_SIZE: usize = 32000;
-
-// Llama 13B
-// const DIM: usize = 5120;
-// const HIDDEN_DIM: usize = 13824;
-// const ATTN_GROUPS: usize = 1;
-// const N_LAYERS: usize = 40;
-// const N_HEADS: usize = 40;
+// const DIM: usize = 8192;
+// const HIDDEN_DIM: usize = 28672;
+// const ATTN_GROUPS: usize = 8;
+// const N_LAYERS: usize = 80;
+// const N_HEADS: usize = 64;
 // const SEQ_LEN: usize = 2048;
 // const VOCAB_SIZE: usize = 32000;
+
+// Llama 13B
+const DIM: usize = 5120;
+const HIDDEN_DIM: usize = 13824;
+const ATTN_GROUPS: usize = 1;
+const N_LAYERS: usize = 40;
+const N_HEADS: usize = 40;
+const SEQ_LEN: usize = 2048;
+const VOCAB_SIZE: usize = 32000;
 
 // Llama 7B
 // const DIM: usize = 4096;
@@ -227,24 +227,22 @@ impl<
                 *o = 0.0;
                 // Do K at a time
                 let zero = f32x8::splat(0.0);
-                let mut collect = f32x8::splat(0.0);
                 let qzeros = &self.qzeros[oi / elems_per_i32];
                 let out_elem = oi % elems_per_i32;
-                let qweight = self.qweight[oi].chunks(ipg);
+                let qweight = self.qweight[oi].chunks_exact(ipg);
 
-                let mut in_pos = 0;
-                self.scales[oi]
+                let collect = self.scales[oi]
                     .into_iter()
                     .zip(qweight)
                     .enumerate()
-                    .for_each(|(group, (scale, qweight))| {
+                    .map(|(group, (scale, qweight))| {
                         let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
                         let scale_simd = f32x8::splat(scale);
                         let zero_simd = i32x8::splat(qz);
-                        let xs = x[in_pos..in_pos + GROUPSIZE].chunks(8);
-                        in_pos += GROUPSIZE;
-                        collect += qweight
-                            .into_iter()
+                        let in_pos = group * GROUPSIZE;
+                        let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
+                        qweight
+                            .iter()
                             .zip(xs)
                             .map(|(v, x)| {
                                 //Extract v into 8 chunks
@@ -255,9 +253,9 @@ impl<
                                 let weight: f32x8 = scale_simd * combine;
                                 weight * x
                             })
-                            .fold(zero, |x, y| x + y);
-                    });
-                *o += collect.reduce_sum();
+                            .fold(zero, |x, y| x + y)
+                    }).fold(zero, |x, y| x + y);
+                *o = collect.reduce_sum();
             });
     }
 }
