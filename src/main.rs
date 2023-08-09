@@ -13,22 +13,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 
 // Configuration for Llama 70B. Others in config.txt
-// const DIM: usize = 8192;
-// const HIDDEN_DIM: usize = 28672;
-// const ATTN_GROUPS: usize = 8;
-// const N_LAYERS: usize = 80;
-// const N_HEADS: usize = 64;
-// const SEQ_LEN: usize = 2048;
-// const VOCAB_SIZE: usize = 32000;
-
-// Llama 13B
-const DIM: usize = 5120;
-const HIDDEN_DIM: usize = 13824;
-const ATTN_GROUPS: usize = 1;
-const N_LAYERS: usize = 40;
-const N_HEADS: usize = 40;
+const DIM: usize = 8192;
+const HIDDEN_DIM: usize = 28672;
+const ATTN_GROUPS: usize = 8;
+const N_LAYERS: usize = 80;
+const N_HEADS: usize = 64;
 const SEQ_LEN: usize = 2048;
 const VOCAB_SIZE: usize = 32000;
+
+// Llama 13B
+// const DIM: usize = 5120;
+// const HIDDEN_DIM: usize = 13824;
+// const ATTN_GROUPS: usize = 1;
+// const N_LAYERS: usize = 40;
+// const N_HEADS: usize = 40;
+// const SEQ_LEN: usize = 2048;
+// const VOCAB_SIZE: usize = 32000;
 
 // Llama 7B
 // const DIM: usize = 4096;
