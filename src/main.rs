@@ -5,6 +5,7 @@ use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
 // It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
 use rayon::prelude::*;
+use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0, _MM_HINT_T1};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem;
@@ -237,6 +238,14 @@ impl<
                 let mut in_pos = 0;
                 self.scales[oi].iter().zip(qweight).enumerate().for_each(
                     |(group, (scale, qweight))| {
+                        // Issue some prefetch intrinsics for the next chunk as we are going linearly
+                        // We prefetch in all memory layers
+                        unsafe {
+                            _mm_prefetch::<_MM_HINT_T0>(
+                                qzeros.as_ptr().offset(group as isize + 1) as *const i8
+                            );
+                        }
+
                         let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
                         let scale_simd = f32x8::splat(*scale);
                         let zero_simd = i32x8::splat(qz);
