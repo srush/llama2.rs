@@ -210,6 +210,7 @@ impl<
         const OUTG: usize,
     > QLinear<IN, OUT, GROUPS, ING, OUTG>
 {
+    #[inline(never)]
     fn matvec(self: &Self, xout: &mut [fx; OUT], x: &[fx; IN]) {
         assert_eq!(ING, IN / 32 * BITS);
         assert_eq!(OUTG, OUT / 32 * BITS);
@@ -222,6 +223,7 @@ impl<
         let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
 
         xout.par_iter_mut()
+            // xout.iter_mut()
             .enumerate()
             .for_each(|(oi, o): (usize, &mut f32)| {
                 *o = 0.0;
@@ -233,18 +235,15 @@ impl<
                 let qweight = self.qweight[oi].chunks_exact(ipg);
 
                 let mut in_pos = 0;
-                self.scales[oi]
-                    .into_iter()
-                    .zip(qweight)
-                    .enumerate()
-                    .for_each(|(group, (scale, qweight))| {
+                self.scales[oi].iter().zip(qweight).enumerate().for_each(
+                    |(group, (scale, qweight))| {
                         let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
-                        let scale_simd = f32x8::splat(scale);
+                        let scale_simd = f32x8::splat(*scale);
                         let zero_simd = i32x8::splat(qz);
                         let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
                         in_pos += GROUPSIZE;
                         collect += qweight
-                            .into_iter()
+                            .iter()
                             .zip(xs)
                             .map(|(v, x)| {
                                 //Extract v into 8 chunks
@@ -256,7 +255,8 @@ impl<
                                 weight * x
                             })
                             .fold(zero, |x, y| x + y);
-                    });
+                    },
+                );
                 *o += collect.reduce_sum();
             });
     }
