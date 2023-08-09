@@ -46,12 +46,12 @@ One thing is that the 100% of the people who are in the 1%
 achieved tok/s: 4.027984
 ```
 
-Here's a run of 7B non-quantized (this is less optimized):
+Here's a run of 7B quantized:
 
 ```
 > target/release/llama2_rs llama2_7b.bin 0.0 11 "The only thing"
 The only thing that is certain in life is change.
-achieved tok/s: 1.0298662
+achieved tok/s: 7.9735823
 ```
 
 ### Configuration
