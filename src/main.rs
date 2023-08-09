@@ -12,22 +12,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 
 // Configuration for Llama 70B. Others in config.txt
-const DIM: usize = 8192;
-const HIDDEN_DIM: usize = 28672;
-const ATTN_GROUPS: usize = 8;
-const N_LAYERS: usize = 80;
-const N_HEADS: usize = 64;
-const SEQ_LEN: usize = 2048;
-const VOCAB_SIZE: usize = 32000;
-
-// Llama 13B
-// const DIM: usize = 5120;
-// const HIDDEN_DIM: usize = 13824;
-// const ATTN_GROUPS: usize = 1;
-// const N_LAYERS: usize = 40;
-// const N_HEADS: usize = 40;
+// const DIM: usize = 8192;
+// const HIDDEN_DIM: usize = 28672;
+// const ATTN_GROUPS: usize = 8;
+// const N_LAYERS: usize = 80;
+// const N_HEADS: usize = 64;
 // const SEQ_LEN: usize = 2048;
 // const VOCAB_SIZE: usize = 32000;
+
+// Llama 13B
+const DIM: usize = 5120;
+const HIDDEN_DIM: usize = 13824;
+const ATTN_GROUPS: usize = 1;
+const N_LAYERS: usize = 40;
+const N_HEADS: usize = 40;
+const SEQ_LEN: usize = 2048;
+const VOCAB_SIZE: usize = 32000;
 
 // Llama 7B
 // const DIM: usize = 4096;
@@ -230,7 +230,7 @@ impl<
                 let mut collect = f32x8::splat(0.0);
                 let qzeros = &self.qzeros[oi / elems_per_i32];
                 let out_elem = oi % elems_per_i32;
-                let qweight = self.qweight[oi].chunks(ipg);
+                let qweight = self.qweight[oi].chunks_exact(ipg);
 
                 let mut in_pos = 0;
                 self.scales[oi]
@@ -241,7 +241,7 @@ impl<
                         let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
                         let scale_simd = f32x8::splat(scale);
                         let zero_simd = i32x8::splat(qz);
-                        let xs = x[in_pos..in_pos + GROUPSIZE].chunks(8);
+                        let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
                         in_pos += GROUPSIZE;
                         collect += qweight
                             .into_iter()
@@ -510,7 +510,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TWeights) {
         // We do this a bit differently in rust.
         // Chunk things up so that each head is a separate slice.
         let xbs: Vec<&mut [fx]> = s.xb.chunks_mut(HEAD_SIZE).collect();
-        let qs: Vec<&[fx]> = s.q.chunks(HEAD_SIZE).collect();
+        let qs: Vec<&[fx]> = s.q.chunks_exact(HEAD_SIZE).collect();
         assert_eq!(xbs.len(), s.att.len());
         s.att
             .par_iter_mut()
