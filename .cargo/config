@@ -1,3 +1,4 @@
 [build]
 rustflags = ["-C", "target-feature=+avx,+avx2,+fma,+sse3,+avx512f",
-             "-C", "target-cpu=native"]
+             "-C", "target-cpu=native",
+             "--cfg", 'model_size="13B"']
