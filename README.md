@@ -12,11 +12,11 @@ Can run up on *1 tok/s* 70B Llama2. (intel i9 with avx512)
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
-To build (requires +nightly to use SIMD, get with rustup):
+To build, you'll need the nightly toolchain, which is used by default:
 
 ```
 > rustup toolchain install nightly # to get nightly
-> cargo +nightly build --release
+> cargo build --release
 ```
 
 If you get a build error you may need to change .cargo/config to match your chipset.
@@ -96,8 +96,7 @@ Started as a port of the original code, with extra type information to make it e
 There are two dependencies: 
 * `memmap2`for memory mapping
 * `rayon` for parallel computation.
-* SIMD enabled support with +nightly.
-
+* SIMD enabled support with `portable_simd`
 
 ### Why? 
 
