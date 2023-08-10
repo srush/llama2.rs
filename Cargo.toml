@@ -24,4 +24,15 @@ name = "llama2_rs"
 path = "src/main.rs"
 
 [features]
-model_size = []
+# Choose between Llama2 models - these are mutually exclusive
+7B = []
+13B = []
+70B = []
+
+# optionally enable AVX512 if your chipset supports it
+avx512 = []
+
+# currently enables Q_4_128 quantization
+quantized = []
+
+default = ["13B", "quantized"]
