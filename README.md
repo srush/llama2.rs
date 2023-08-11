@@ -19,7 +19,7 @@ To build (requires +nightly to use SIMD, get with rustup):
 > cargo +nightly build --release
 ```
 
-If you get an error you may need to change .cargo/config to match your chipset. Looks for AVX512 by default.
+If you get a build error you may need to change .cargo/config to match your chipset.
 
 To get model (loads [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)):
 
@@ -56,7 +56,7 @@ achieved tok/s: 7.9735823
 
 ### Configuration
 
-In order to make the model as fast as possible, you need to compile a new version to adapt to other Llama versions. Currently this is done by a group of constant headers at the top of the file. The model will fail if these disagree with the binary model that is being loaded. 
+In order to make the model as fast as possible, you need to compile a new version to adapt to other Llama versions. Currently in `.cargo/config`. The model will fail if these disagree with the binary model that is being loaded. 
 
 ```rust
 // Configuration for Llama 70B. Others in config.txt                                                                                          
