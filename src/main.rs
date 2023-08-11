@@ -1,15 +1,15 @@
-#![feature(portable_simd)]
+    #![feature(portable_simd)]
 
-use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
+
 // This is a conversion of llama2.c to rust.
 // It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
-use rayon::prelude::*;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
+use rayon::prelude::*;
 
 // Configuration for Llama 70B. Others in config.txt
 // set these configuration options using .cargo/config
@@ -26,7 +26,7 @@ mod constants {
 
 // Llama 13B
 #[cfg(model_size="13B")]
-mod constants {
+pub mod constants {
     pub const DIM: usize = 5120;
     pub const HIDDEN_DIM: usize = 13824;
     pub const ATTN_GROUPS: usize = 1;
@@ -48,21 +48,197 @@ mod constants {
     pub const VOCAB_SIZE: usize = 32000;
 }
 
-use constants::{DIM, HIDDEN_DIM, ATTN_GROUPS, N_LAYERS, N_HEADS, SEQ_LEN, VOCAB_SIZE};
-
 // Grouped Query Attention
 const KV_DIM: usize = DIM / ATTN_GROUPS;
 const N_KV_HEADS: usize = N_HEADS / ATTN_GROUPS;
 const HEAD_SIZE: usize = DIM / N_HEADS;
+use constants::{DIM, HIDDEN_DIM, ATTN_GROUPS, N_LAYERS, N_HEADS, SEQ_LEN, VOCAB_SIZE};
 
-// Turn on GPT-Q Quantization.
-type TWeights = QTransformerWeights;
-const BITS: usize = 4;
-const GROUPSIZE: usize = 128;
+#[repr(C)]
+pub struct Linear<const IN: usize, const OUT: usize> {
+    w: [[f32; IN]; OUT],
+}
 
-// Eventually will move to f16
-#[allow(non_camel_case_types)]
-type fx = f32;
+impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
+    pub fn matvec(self: &Self, xout: &mut [f32; OUT], x: &[f32; IN]) {
+        // W (d,n) @ x (n,) -> xout (d,)
+        // by far the most amount of time is spent inside this little function
+        xout.par_iter_mut().enumerate().for_each(|(i, v)| {
+            *v = self.w[i]
+                .iter()
+                .zip(x.iter())
+                .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
+        });
+    }
+}
+
+
+
+#[cfg(quant="no")]
+mod model {
+    /// Code for standard non-quantized matrix vector models.
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    struct TransformerWeights {
+        // token embedding table
+        pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
+        // weights for rmsnorms
+        pub rms_att_weight: [[f32; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
+        // weights for matmuls
+        pub wq: [Linear<DIM, DIM>; N_LAYERS],    // (layer, dim, dim)
+        pub wk: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
+        pub wv: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
+        pub wo: [Linear<DIM, DIM>; N_LAYERS],    // (layer, dim, dim)
+
+        pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
+        // weights for ffn
+        pub w1: [Linear<DIM, HIDDEN_DIM>; N_LAYERS], // (layer, hidden_dim, dim)
+        pub w2: [Linear<HIDDEN_DIM, DIM>; N_LAYERS], // (layer, dim, hidden_dim)
+        pub w3: [Linear<DIM, HIDDEN_DIM>; N_LAYERS], // (layer, hidden_dim, dim)
+        // final rmsnorm
+        pub rms_final_weight: [f32; DIM], // (dim,)
+        // freq_cis for RoPE relatively positional embeddings
+        pub freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
+        pub freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
+        // (optional) classifier weights for the logits, on the last layer
+        pub wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
+    }
+
+    // Turn off GPT-Q Quantization.
+    pub type TWeights = TransformerWeights;
+}
+
+
+// Quant 4 bits
+#[cfg(quant="Q_4_128")]
+mod model {
+    /// Code for quantized SIMD implementation.
+    use rayon::prelude::*;
+    use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
+
+
+    /// 
+    const fn int_div_up(x: usize, y: usize) -> usize {
+        x / y + if x % y == 0 { 0 } else { 1 }
+    }
+    
+    use super::{DIM, HIDDEN_DIM, KV_DIM, N_LAYERS, N_HEADS, SEQ_LEN, VOCAB_SIZE};
+    const BITS: usize = 4;
+    const GROUPSIZE: usize = 128;
+    
+    #[repr(C)]
+    pub struct QLinear<
+        const IN: usize,
+        const OUT: usize,
+        const GROUPS: usize,
+        const ING: usize,
+        const OUTG: usize,
+    > {
+        qweight: [[i32; ING]; OUT],
+        qzeros: [[i32; GROUPS]; OUTG],
+        scales: [[f32; GROUPS]; OUT],
+    }
+    
+    impl<
+            const IN: usize,
+            const OUT: usize,
+            const GROUPS: usize,
+            const ING: usize,
+            const OUTG: usize,
+        > QLinear<IN, OUT, GROUPS, ING, OUTG>
+    {
+        pub fn matvec(self: &Self, xout: &mut [f32; OUT], x: &[f32; IN]) {
+            assert_eq!(ING, IN / 32 * BITS);
+            assert_eq!(OUTG, OUT / 32 * BITS);
+            assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
+    
+            let mask = (1 << BITS) - 1;
+            let elems_per_i32 = 32 / BITS;
+            let ipg: usize = GROUPSIZE / 32 * BITS;
+            let mask_4bits = i32x8::splat(mask);
+            let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
+    
+            xout.par_iter_mut()
+                .enumerate()
+                .for_each(|(oi, o): (usize, &mut f32)| {
+                    *o = 0.0;
+                    // Do K at a time
+                    let zero = f32x8::splat(0.0);
+                    let qzeros = &self.qzeros[oi / elems_per_i32];
+                    let out_elem = oi % elems_per_i32;
+                    let qweight = self.qweight[oi].chunks_exact(ipg);
+    
+                    let collect = self.scales[oi]
+                        .into_iter()
+                        .zip(qweight)
+                        .enumerate()
+                        .map(|(group, (scale, qweight))| {
+                            let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
+                            let scale_simd = f32x8::splat(scale);
+                            let zero_simd = i32x8::splat(qz);
+                            let in_pos = group * GROUPSIZE;
+                            let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
+                            qweight
+                                .iter()
+                                .zip(xs)
+                                .map(|(v, x)| {
+                                    //Extract v into 8 chunks
+                                    let x = f32x8::from_slice(x);
+                                    let num_simd = i32x8::splat(*v);
+                                    let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
+                                    let combine: f32x8 = (qw - zero_simd).cast::<f32>();
+                                    let weight: f32x8 = scale_simd * combine;
+                                    weight * x
+                                })
+                                .fold(zero, |x, y| x + y)
+                        }).fold(zero, |x, y| x + y);
+                    *o = collect.reduce_sum();
+                });
+        }
+    }
+    
+    
+    const DIM_GROUPS: usize = int_div_up(DIM, GROUPSIZE);
+    const HDIM_GROUPS: usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
+    const DIM_G: usize = DIM / 32 * BITS;
+    const KV_DIM_G: usize = KV_DIM / 32 * BITS;
+    const HDIM_G: usize = HIDDEN_DIM / 32 * BITS;
+    
+    type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
+    type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
+    
+    #[repr(C)]
+    pub struct QTransformerWeights {
+        // token embedding table
+        pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
+        // weights for rmsnorms
+        pub rms_att_weight: [[f32; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
+        // weights for matmuls
+        pub wq: Att,   // (layer, dim, dim)
+        pub wk: AttKV, // (layer, dim, dim)
+        pub wv: AttKV, // (layer, dim, dim)
+        pub wo: Att,   // (layer, dim, dim)
+    
+        pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
+        // weights for ffn
+        pub w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+        pub w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
+        pub w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+        // final rmsnorm
+        pub rms_final_weight: [f32; DIM], // (dim,)
+        // freq_cis for RoPE relatively positional embeddings
+        pub freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
+        pub freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
+        // (optional) classifier weights for the logits, on the last layer
+        pub wcls: super::Linear<DIM, VOCAB_SIZE>, // (dim,)
+    }
+
+    // Turn on GPT-Q Quantization.
+    pub type TWeights = QTransformerWeights;
+}
+
+use model::TWeights;
 
 // Some helpers for reading from binary files.
 fn read_usize(file: &mut File) -> usize {
@@ -88,11 +264,8 @@ fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
     vocab.into_iter().position(|x| x == str)
 }
 
-const fn int_div_up(x: usize, y: usize) -> usize {
-    x / y + if x % y == 0 { 0 } else { 1 }
-}
 
-fn argmax(v: &[fx]) -> usize {
+fn argmax(v: &[f32]) -> usize {
     // return argmax of v in elements 0..n
     v.iter()
         .enumerate()
@@ -149,19 +322,19 @@ impl Config {
 
 struct RunState {
     // current wave of activations
-    x: [fx; DIM],             // activation at current time stamp (dim,)
-    xb: [fx; DIM],            // same, but inside a residual branch (dim,)
-    xb2: [fx; DIM],           // an additional buffer just for convenience (dim,)
-    hb: [fx; HIDDEN_DIM],     // buffer for hidden dimension in the ffn (hidden_dim,)
-    hb2: [fx; HIDDEN_DIM],    // buffer for hidden dimension in the ffn (hidden_dim,)
-    q: [fx; DIM],             // query (dim,)
-    k: [fx; KV_DIM],          // key (dim,)
-    v: [fx; KV_DIM],          // value (dim,)
-    att: Vec<[fx; SEQ_LEN]>,  // buffer for scores/attention values (n_heads, seq_len)
-    logits: [fx; VOCAB_SIZE], // output logits
+    x: [f32; DIM],             // activation at current time stamp (dim,)
+    xb: [f32; DIM],            // same, but inside a residual branch (dim,)
+    xb2: [f32; DIM],           // an additional buffer just for convenience (dim,)
+    hb: [f32; HIDDEN_DIM],     // buffer for hidden dimension in the ffn (hidden_dim,)
+    hb2: [f32; HIDDEN_DIM],    // buffer for hidden dimension in the ffn (hidden_dim,)
+    q: [f32; DIM],             // query (dim,)
+    k: [f32; KV_DIM],          // key (dim,)
+    v: [f32; KV_DIM],          // value (dim,)
+    att: Vec<[f32; SEQ_LEN]>,  // buffer for scores/attention values (n_heads, seq_len)
+    logits: [f32; VOCAB_SIZE], // output logits
     // kv cache
-    key_cache: Vec<Vec<[[fx; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
-    value_cache: Vec<Vec<[[fx; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
+    key_cache: Vec<Vec<[[f32; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
+    value_cache: Vec<Vec<[[f32; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
 }
 
 impl RunState {
@@ -183,163 +356,12 @@ impl RunState {
     }
 }
 
-#[repr(C)]
-struct Linear<const IN: usize, const OUT: usize> {
-    w: [[fx; IN]; OUT],
-}
-
-impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
-    fn matvec(self: &Self, xout: &mut [fx; OUT], x: &[fx; IN]) {
-        // W (d,n) @ x (n,) -> xout (d,)
-        // by far the most amount of time is spent inside this little function
-        xout.par_iter_mut().enumerate().for_each(|(i, v)| {
-            *v = self.w[i]
-                .iter()
-                .zip(x.iter())
-                .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
-        });
-    }
-}
-
-#[repr(C)]
-struct QLinear<
-    const IN: usize,
-    const OUT: usize,
-    const GROUPS: usize,
-    const ING: usize,
-    const OUTG: usize,
-> {
-    qweight: [[i32; ING]; OUT],
-    qzeros: [[i32; GROUPS]; OUTG],
-    scales: [[f32; GROUPS]; OUT],
-}
-
-impl<
-        const IN: usize,
-        const OUT: usize,
-        const GROUPS: usize,
-        const ING: usize,
-        const OUTG: usize,
-    > QLinear<IN, OUT, GROUPS, ING, OUTG>
-{
-    fn matvec(self: &Self, xout: &mut [fx; OUT], x: &[fx; IN]) {
-        assert_eq!(ING, IN / 32 * BITS);
-        assert_eq!(OUTG, OUT / 32 * BITS);
-        assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
-
-        let mask = (1 << BITS) - 1;
-        let elems_per_i32 = 32 / BITS;
-        let ipg: usize = GROUPSIZE / 32 * BITS;
-        let mask_4bits = i32x8::splat(mask);
-        let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
-
-        xout.par_iter_mut()
-            .enumerate()
-            .for_each(|(oi, o): (usize, &mut f32)| {
-                *o = 0.0;
-                // Do K at a time
-                let zero = f32x8::splat(0.0);
-                let qzeros = &self.qzeros[oi / elems_per_i32];
-                let out_elem = oi % elems_per_i32;
-                let qweight = self.qweight[oi].chunks_exact(ipg);
-
-                let collect = self.scales[oi]
-                    .into_iter()
-                    .zip(qweight)
-                    .enumerate()
-                    .map(|(group, (scale, qweight))| {
-                        let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
-                        let scale_simd = f32x8::splat(scale);
-                        let zero_simd = i32x8::splat(qz);
-                        let in_pos = group * GROUPSIZE;
-                        let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
-                        qweight
-                            .iter()
-                            .zip(xs)
-                            .map(|(v, x)| {
-                                //Extract v into 8 chunks
-                                let x = f32x8::from_slice(x);
-                                let num_simd = i32x8::splat(*v);
-                                let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
-                                let combine: f32x8 = (qw - zero_simd).cast::<f32>();
-                                let weight: f32x8 = scale_simd * combine;
-                                weight * x
-                            })
-                            .fold(zero, |x, y| x + y)
-                    }).fold(zero, |x, y| x + y);
-                *o = collect.reduce_sum();
-            });
-    }
-}
-
-#[repr(C)]
-#[allow(dead_code)]
-struct TransformerWeights {
-    // token embedding table
-    token_embedding_table: [[fx; DIM]; VOCAB_SIZE], // (vocab_size, dim)
-    // weights for rmsnorms
-    rms_att_weight: [[fx; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
-    // weights for matmuls
-    wq: [Linear<DIM, DIM>; N_LAYERS],    // (layer, dim, dim)
-    wk: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
-    wv: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
-    wo: [Linear<DIM, DIM>; N_LAYERS],    // (layer, dim, dim)
-
-    rms_ffn_weight: [[fx; DIM]; N_LAYERS], // (layer, dim)
-    // weights for ffn
-    w1: [Linear<DIM, HIDDEN_DIM>; N_LAYERS], // (layer, hidden_dim, dim)
-    w2: [Linear<HIDDEN_DIM, DIM>; N_LAYERS], // (layer, dim, hidden_dim)
-    w3: [Linear<DIM, HIDDEN_DIM>; N_LAYERS], // (layer, hidden_dim, dim)
-    // final rmsnorm
-    rms_final_weight: [fx; DIM], // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    freq_cis_real: [[fx; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
-    freq_cis_imag: [[fx; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
-    // (optional) classifier weights for the logits, on the last layer
-    wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
-}
-
-const DIM_GROUPS: usize = int_div_up(DIM, GROUPSIZE);
-const HDIM_GROUPS: usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
-const DIM_G: usize = DIM / 32 * BITS;
-const KV_DIM_G: usize = KV_DIM / 32 * BITS;
-const HDIM_G: usize = HIDDEN_DIM / 32 * BITS;
-
-type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
-type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
-
-#[repr(C)]
-struct QTransformerWeights {
-    // token embedding table
-    token_embedding_table: [[fx; DIM]; VOCAB_SIZE], // (vocab_size, dim)
-    // weights for rmsnorms
-    rms_att_weight: [[fx; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
-    // weights for matmuls
-    wq: Att,   // (layer, dim, dim)
-    wk: AttKV, // (layer, dim, dim)
-    wv: AttKV, // (layer, dim, dim)
-    wo: Att,   // (layer, dim, dim)
-
-    rms_ffn_weight: [[fx; DIM]; N_LAYERS], // (layer, dim)
-    // weights for ffn
-    w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
-    w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
-    w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
-    // final rmsnorm
-    rms_final_weight: [fx; DIM], // (dim,)
-    // freq_cis for RoPE relatively positional embeddings
-    freq_cis_real: [[fx; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
-    freq_cis_imag: [[fx; DIM / N_HEADS / 2]; SEQ_LEN], // (seq_len, dim/2)
-    // (optional) classifier weights for the logits, on the last layer
-    wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
-}
-
 type Token = usize;
 
 #[derive(Debug)]
 struct Tokenizer {
     vocab: Vec<String>,
-    vocab_scores: Vec<fx>,
+    vocab_scores: Vec<f32>,
     max_token_length: usize,
 }
 
@@ -416,20 +438,20 @@ impl Tokenizer {
 // ----------------------------------------------------------------------------
 // neural net blocks
 
-fn accum(a: &mut [fx], b: &[fx]) {
+fn accum(a: &mut [f32], b: &[f32]) {
     for i in 0..a.len() {
         a[i] += b[i];
     }
 }
 
-fn rmsnorm(o: &mut [fx; DIM], xo: Option<&[fx]>, weight: &[fx; DIM]) {
+fn rmsnorm(o: &mut [f32; DIM], xo: Option<&[f32]>, weight: &[f32; DIM]) {
     // calculate sum of squares
-    let mut ss: fx = 0.0;
+    let mut ss: f32 = 0.0;
     for i in 0..DIM {
         let x = xo.unwrap_or(o);
         ss += x[i] * x[i];
     }
-    ss /= DIM as fx;
+    ss /= DIM as f32;
     ss += 1e-5;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
@@ -439,7 +461,7 @@ fn rmsnorm(o: &mut [fx; DIM], xo: Option<&[fx]>, weight: &[fx; DIM]) {
     }
 }
 
-fn softmax(x: &mut [fx]) {
+fn softmax(x: &mut [f32]) {
     // find max value (for numerical stability)
     let max_val = x.iter().fold(x[0], |acc, &x_i| acc.max(x_i));
     // exp and sum
@@ -454,12 +476,12 @@ fn softmax(x: &mut [fx]) {
     }
 }
 
-fn dot(q: &[fx], k: &[fx]) -> fx {
+fn dot(q: &[f32], k: &[f32]) -> f32 {
     assert_eq!(q.len(), k.len());
     q.iter()
         .zip(k.iter())
         .map(|(&q_i, &k_i)| q_i * k_i)
-        .sum::<fx>()
+        .sum::<f32>()
 }
 
 fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TWeights) {
@@ -519,8 +541,8 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TWeights) {
         // multihead attention. iterate over all heads
         // We do this a bit differently in rust.
         // Chunk things up so that each head is a separate slice.
-        let xbs: Vec<&mut [fx]> = s.xb.chunks_mut(HEAD_SIZE).collect();
-        let qs: Vec<&[fx]> = s.q.chunks(HEAD_SIZE).collect();
+        let xbs: Vec<&mut [f32]> = s.xb.chunks_mut(HEAD_SIZE).collect();
+        let qs: Vec<&[f32]> = s.q.chunks(HEAD_SIZE).collect();
         assert_eq!(xbs.len(), s.att.len());
         s.att
             .par_iter_mut()
@@ -536,7 +558,7 @@ fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TWeights) {
                     // get the key vector for this head and at this timestep
                     let k = &s.key_cache[l][t][h / ATTN_GROUPS];
                     // calculate the attention score as the dot product of q and k
-                    let score = dot(q, k) / (HEAD_SIZE as fx).sqrt();
+                    let score = dot(q, k) / (HEAD_SIZE as f32).sqrt();
                     // save the score to the attention buffer
                     att[t] = score;
                 }
@@ -627,12 +649,12 @@ impl Random {
         (self.seed.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 32) as u32
     }
 
-    fn random(self: &mut Self) -> fx {
+    fn random(self: &mut Self) -> f32 {
         // random float32 in [0,1)
-        (self.random_u32() >> 8) as fx / 16777216.0
+        (self.random_u32() >> 8) as f32 / 16777216.0
     }
 
-    fn sample(self: &mut Self, probabilities: &[fx], n: usize) -> usize {
+    fn sample(self: &mut Self, probabilities: &[f32], n: usize) -> usize {
         // sample index from probabilities, they must sum to 1
         let r = self.random();
         let mut cdf = 0.0;
@@ -753,6 +775,6 @@ fn main() {
     let end = time_in_ms();
     println!(
         "\nachieved tok/s: {}",
-        (steps - 1) as fx / (end - start) as fx * 1000.0
+        (steps - 1) as f32 / (end - start) as f32 * 1000.0
     );
 }
