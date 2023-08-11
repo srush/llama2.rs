@@ -1,19 +1,18 @@
-    #![feature(portable_simd)]
-
+#![feature(portable_simd)]
 
 // This is a conversion of llama2.c to rust.
 // It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
-use rayon::prelude::*;
 
 // Configuration for Llama 70B. Others in config.txt
 // set these configuration options using .cargo/config
-#[cfg(model_size="70B")]
+#[cfg(model_size = "70B")]
 mod constants {
     pub const DIM: usize = 8192;
     pub const HIDDEN_DIM: usize = 28672;
@@ -25,7 +24,7 @@ mod constants {
 }
 
 // Llama 13B
-#[cfg(model_size="13B")]
+#[cfg(model_size = "13B")]
 pub mod constants {
     pub const DIM: usize = 5120;
     pub const HIDDEN_DIM: usize = 13824;
@@ -37,7 +36,7 @@ pub mod constants {
 }
 
 // Llama 7B
-#[cfg(model_size="7B")]
+#[cfg(model_size = "7B")]
 mod constants {
     pub const DIM: usize = 4096;
     pub const HIDDEN_DIM: usize = 11008;
@@ -52,7 +51,7 @@ mod constants {
 const KV_DIM: usize = DIM / ATTN_GROUPS;
 const N_KV_HEADS: usize = N_HEADS / ATTN_GROUPS;
 const HEAD_SIZE: usize = DIM / N_HEADS;
-use constants::{DIM, HIDDEN_DIM, ATTN_GROUPS, N_LAYERS, N_HEADS, SEQ_LEN, VOCAB_SIZE};
+use constants::{ATTN_GROUPS, DIM, HIDDEN_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE};
 
 #[repr(C)]
 pub struct Linear<const IN: usize, const OUT: usize> {
@@ -72,9 +71,7 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
     }
 }
 
-
-
-#[cfg(quant="no")]
+#[cfg(quant = "no")]
 mod model {
     /// Code for standard non-quantized matrix vector models.
 
@@ -86,10 +83,10 @@ mod model {
         // weights for rmsnorms
         pub rms_att_weight: [[f32; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
         // weights for matmuls
-        pub wq: [Linear<DIM, DIM>; N_LAYERS],    // (layer, dim, dim)
+        pub wq: [Linear<DIM, DIM>; N_LAYERS], // (layer, dim, dim)
         pub wk: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
         pub wv: [Linear<DIM, KV_DIM>; N_LAYERS], // (layer, dim, dim)
-        pub wo: [Linear<DIM, DIM>; N_LAYERS],    // (layer, dim, dim)
+        pub wo: [Linear<DIM, DIM>; N_LAYERS], // (layer, dim, dim)
 
         pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
         // weights for ffn
@@ -109,24 +106,22 @@ mod model {
     pub type TWeights = TransformerWeights;
 }
 
-
 // Quant 4 bits
-#[cfg(quant="Q_4_128")]
+#[cfg(quant = "Q_4_128")]
 mod model {
     /// Code for quantized SIMD implementation.
     use rayon::prelude::*;
     use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
 
-
-    /// 
+    ///
     const fn int_div_up(x: usize, y: usize) -> usize {
         x / y + if x % y == 0 { 0 } else { 1 }
     }
-    
-    use super::{DIM, HIDDEN_DIM, KV_DIM, N_LAYERS, N_HEADS, SEQ_LEN, VOCAB_SIZE};
+
+    use super::{DIM, HIDDEN_DIM, KV_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE};
     const BITS: usize = 4;
     const GROUPSIZE: usize = 128;
-    
+
     #[repr(C)]
     pub struct QLinear<
         const IN: usize,
@@ -139,7 +134,7 @@ mod model {
         qzeros: [[i32; GROUPS]; OUTG],
         scales: [[f32; GROUPS]; OUT],
     }
-    
+
     impl<
             const IN: usize,
             const OUT: usize,
@@ -152,13 +147,13 @@ mod model {
             assert_eq!(ING, IN / 32 * BITS);
             assert_eq!(OUTG, OUT / 32 * BITS);
             assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
-    
+
             let mask = (1 << BITS) - 1;
             let elems_per_i32 = 32 / BITS;
             let ipg: usize = GROUPSIZE / 32 * BITS;
             let mask_4bits = i32x8::splat(mask);
             let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
-    
+
             xout.par_iter_mut()
                 .enumerate()
                 .for_each(|(oi, o): (usize, &mut f32)| {
@@ -168,7 +163,7 @@ mod model {
                     let qzeros = &self.qzeros[oi / elems_per_i32];
                     let out_elem = oi % elems_per_i32;
                     let qweight = self.qweight[oi].chunks_exact(ipg);
-    
+
                     let collect = self.scales[oi]
                         .into_iter()
                         .zip(qweight)
@@ -192,22 +187,22 @@ mod model {
                                     weight * x
                                 })
                                 .fold(zero, |x, y| x + y)
-                        }).fold(zero, |x, y| x + y);
+                        })
+                        .fold(zero, |x, y| x + y);
                     *o = collect.reduce_sum();
                 });
         }
     }
-    
-    
+
     const DIM_GROUPS: usize = int_div_up(DIM, GROUPSIZE);
     const HDIM_GROUPS: usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
     const DIM_G: usize = DIM / 32 * BITS;
     const KV_DIM_G: usize = KV_DIM / 32 * BITS;
     const HDIM_G: usize = HIDDEN_DIM / 32 * BITS;
-    
+
     type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
     type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
-    
+
     #[repr(C)]
     pub struct QTransformerWeights {
         // token embedding table
@@ -219,7 +214,7 @@ mod model {
         pub wk: AttKV, // (layer, dim, dim)
         pub wv: AttKV, // (layer, dim, dim)
         pub wo: Att,   // (layer, dim, dim)
-    
+
         pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
         // weights for ffn
         pub w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
@@ -263,7 +258,6 @@ fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
     // find the first perfect match for str in vocab, return its index or -1 if not found
     vocab.into_iter().position(|x| x == str)
 }
-
 
 fn argmax(v: &[f32]) -> usize {
     // return argmax of v in elements 0..n
