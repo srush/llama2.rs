@@ -1,7 +1,5 @@
 #![feature(portable_simd)]
 
-// This is a conversion of llama2.c to rust.
-// It is basically line-by-line following chatgpt :)
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::fs::File;
@@ -10,17 +8,21 @@ use std::mem;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, io};
 
-// Configuration for Llama 70B. Others in config.txt
-// set these configuration options using .cargo/config
+
+/// We begin by defining the core constants for model sizes.
+/// Rust note: These are built into the code to allo for full optimization
+/// You can select which is used with --cfg model_size=70B.
+
 #[cfg(model_size = "70B")]
 mod constants {
-    pub const DIM: usize = 8192;
-    pub const HIDDEN_DIM: usize = 28672;
-    pub const ATTN_GROUPS: usize = 8;
-    pub const N_LAYERS: usize = 80;
-    pub const N_HEADS: usize = 64;
-    pub const SEQ_LEN: usize = 2048;
-    pub const VOCAB_SIZE: usize = 32000;
+    /// Llama 70B configuration
+    pub const DIM: usize = 8192; // Base dimension
+    pub const HIDDEN_DIM: usize = 28672; // Hidden dimension
+    pub const ATTN_GROUPS: usize = 8; // Grouped query attention
+    pub const N_LAYERS: usize = 80; // Number of layers
+    pub const N_HEADS: usize = 64; // Number of heads
+    pub const SEQ_LEN: usize = 2048; // Max sequence length
+    pub const VOCAB_SIZE: usize = 32000; // Vocab size
 }
 
 // Llama 13B
@@ -47,29 +49,62 @@ mod constants {
     pub const VOCAB_SIZE: usize = 32000;
 }
 
+/// A dense linear layer.
+/// Rust Notes:
+/// 1) We use IN and OUT as generic constrants for safety
+/// 2) We need repr(c) becuase we are memory mapping from a C file.
+#[repr(C)]
+pub struct Linear<const IN: usize, const OUT: usize> {
+    w: [[f32; IN]; OUT], // Storage is as a dense matrix.
+}
+
+
+impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
+    /// Rust note: x is passed by reference, xout as mutiple reference.
+    pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>, 
+        cache: Option<&mut [[f32; OUT]; IN]>) {
+        // W (d,n) @ x (n,) -> xout (d,)
+        // by far the most amount of time is spent inside this little function
+        /// Rust note: par_iter_mut is from the RAYON library. It run in parallel.
+        for (xout, x) in xout.iter_mut().zip(x) {
+            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
+                *v = self.w[i]
+                    .iter()
+                    .zip(x.iter())
+                    .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
+            });
+        }
+    }
+}
+
+pub struct Linear2<'a, const IN: usize, const OUT: usize> {
+    w: &'a[[f32; IN]; OUT], // Storage is as a dense matrix.
+}
+
+
+impl<'a, const IN: usize, const OUT: usize> Linear2<'a, IN, OUT> {
+    /// Rust note: x is passed by reference, xout as mutiple reference.
+    pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>, 
+        cache: Option<&mut [[f32; OUT]; IN]>) {
+        // W (d,n) @ x (n,) -> xout (d,)
+        // by far the most amount of time is spent inside this little function
+        /// Rust note: par_iter_mut is from the RAYON library. It run in parallel.
+        for (xout, x) in xout.iter_mut().zip(x) {
+            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
+                *v = self.w[i]
+                    .iter()
+                    .zip(x.iter())
+                    .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
+            });
+        }
+    }
+}
+
 // Grouped Query Attention
 const KV_DIM: usize = DIM / ATTN_GROUPS;
 const N_KV_HEADS: usize = N_HEADS / ATTN_GROUPS;
 const HEAD_SIZE: usize = DIM / N_HEADS;
 use constants::{ATTN_GROUPS, DIM, HIDDEN_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE};
-
-#[repr(C)]
-pub struct Linear<const IN: usize, const OUT: usize> {
-    w: [[f32; IN]; OUT],
-}
-
-impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
-    pub fn matvec(self: &Self, xout: &mut [f32; OUT], x: &[f32; IN]) {
-        // W (d,n) @ x (n,) -> xout (d,)
-        // by far the most amount of time is spent inside this little function
-        xout.par_iter_mut().enumerate().for_each(|(i, v)| {
-            *v = self.w[i]
-                .iter()
-                .zip(x.iter())
-                .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
-        });
-    }
-}
 
 #[cfg(quant = "no")]
 mod model {
@@ -112,6 +147,7 @@ mod model {
     /// Code for quantized SIMD implementation.
     use rayon::prelude::*;
     use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
+    use matrixmultiply::sgemm;
 
     ///
     const fn int_div_up(x: usize, y: usize) -> usize {
@@ -143,7 +179,8 @@ mod model {
             const OUTG: usize,
         > QLinear<IN, OUT, GROUPS, ING, OUTG>
     {
-        pub fn matvec(self: &Self, xout: &mut [f32; OUT], x: &[f32; IN]) {
+        pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>, 
+                      cache: Option<&mut  [[f32; IN]; OUT]>) {
             assert_eq!(ING, IN / 32 * BITS);
             assert_eq!(OUTG, OUT / 32 * BITS);
             assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
@@ -153,44 +190,79 @@ mod model {
             let ipg: usize = GROUPSIZE / 32 * BITS;
             let mask_4bits = i32x8::splat(mask);
             let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
-
-            xout.par_iter_mut()
-                .enumerate()
-                .for_each(|(oi, o): (usize, &mut f32)| {
-                    *o = 0.0;
-                    // Do K at a time
-                    let zero = f32x8::splat(0.0);
+            let zero = f32x8::splat(0.0);
+            if false { //x.len() > 1 {
+                // True weights
+                let mut weights = cache.unwrap();
+                weights.par_iter_mut().enumerate().for_each(|(oi, weight)| {
                     let qzeros = &self.qzeros[oi / elems_per_i32];
                     let out_elem = oi % elems_per_i32;
                     let qweight = self.qweight[oi].chunks_exact(ipg);
-
-                    let collect = self.scales[oi]
-                        .into_iter()
-                        .zip(qweight)
-                        .enumerate()
-                        .map(|(group, (scale, qweight))| {
+                    self.scales[oi].into_iter().zip(qweight).enumerate().for_each(
+                        |(group, (scale, qweight))| {
                             let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
                             let scale_simd = f32x8::splat(scale);
                             let zero_simd = i32x8::splat(qz);
                             let in_pos = group * GROUPSIZE;
-                            let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
-                            qweight
-                                .iter()
-                                .zip(xs)
-                                .map(|(v, x)| {
-                                    //Extract v into 8 chunks
-                                    let x = f32x8::from_slice(x);
-                                    let num_simd = i32x8::splat(*v);
-                                    let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
-                                    let combine: f32x8 = (qw - zero_simd).cast::<f32>();
-                                    let weight: f32x8 = scale_simd * combine;
-                                    weight * x
-                                })
-                                .fold(zero, |x, y| x + y)
-                        })
-                        .fold(zero, |x, y| x + y);
-                    *o = collect.reduce_sum();
+                            let ws = weight[in_pos..in_pos + GROUPSIZE].chunks_exact_mut(8);
+                            qweight.into_iter().zip(ws.into_iter()).for_each(|(v, w)| {
+                                //Extract v into 8 chunks
+                                let num_simd = i32x8::splat(*v);
+                                let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
+                                let combine: f32x8 = (qw - zero_simd).cast::<f32>();
+                                let weight: f32x8 = scale_simd * combine;
+                                weight.copy_to_slice(w);
+                            });
+                        },
+                    );
                 });
+
+                // let w = super::Linear2{w: weights};
+                // w.matvec(xout, x, None);
+                unsafe {
+                    sgemm(xout.len(), IN, OUT, 1.0, x.as_ptr() as *const f32, IN as isize, 1 as isize, weights.as_ptr()  as *const f32, 1 as isize, IN as isize, 0.0, xout.as_ptr()  as *mut f32, OUT as isize, 1 as isize);
+                }
+
+            } else {
+                for (xout, x) in xout.iter_mut().zip(x) {
+                    xout.par_iter_mut()
+                        .enumerate()
+                        .for_each(|(oi, o): (usize, &mut f32)| {
+                            *o = 0.0;
+                            // Do K at a time
+                            let qzeros = &self.qzeros[oi / elems_per_i32];
+                            let out_elem = oi % elems_per_i32;
+                            let qweight = self.qweight[oi].chunks_exact(ipg);
+
+                            let collect = self.scales[oi]
+                                .into_iter()
+                                .zip(qweight)
+                                .enumerate()
+                                .map(|(group, (scale, qweight))| {
+                                    let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
+                                    let scale_simd = f32x8::splat(scale);
+                                    let zero_simd = i32x8::splat(qz);
+                                    let in_pos = group * GROUPSIZE;
+                                    let xs = x[in_pos..in_pos + GROUPSIZE].chunks_exact(8);
+                                    qweight
+                                        .iter()
+                                        .zip(xs)
+                                        .map(|(v, x)| {
+                                            //Extract v into 8 chunks
+                                            let x = f32x8::from_slice(x);
+                                            let num_simd = i32x8::splat(*v);
+                                            let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
+                                            let combine: f32x8 = (qw - zero_simd).cast::<f32>();
+                                            let weight: f32x8 = scale_simd * combine;
+                                            weight * x
+                                        })
+                                        .fold(zero, |x, y| x + y)
+                                })
+                                .fold(zero, |x, y| x + y);
+                            *o = collect.reduce_sum();
+                        });
+                }
+            }
         }
     }
 
@@ -270,62 +342,30 @@ fn argmax(v: &[f32]) -> usize {
 
 #[derive(Debug)]
 #[allow(dead_code)]
+#[repr(C)]
 struct Config {
-    dim: usize,        // transformer dimension
-    hidden_dim: usize, // for ffn layers
-    n_layers: usize,   // number of layers
-    n_heads: usize,    // number of query heads
-    n_kv_heads: usize, // number of key/value heads (can be < query heads because of multiquery)
-    vocab_size: usize, // vocabulary size, usually 256 (byte-level)
-    seq_len: usize,    // max sequence length
-    shared_weight: bool,
+    dim: u32,        // transformer dimension
+    hidden_dim: u32, // for ffn layers
+    n_layers: u32,   // number of layers
+    n_heads: u32,    // number of query heads
+    n_kv_heads: u32, // number of key/value heads (can be < query heads because of multiquery)
+    vocab_size: u32,
+    seq_len: u32,
 }
 
 // This config is mostly ignored.
 // We use it to check compile time constants.
 impl Config {
     fn check_static(self: &Self) {
-        assert_eq!(self.dim, DIM);
-        assert_eq!(self.hidden_dim, HIDDEN_DIM);
-        assert_eq!(self.n_layers, N_LAYERS);
-        assert_eq!(self.n_heads, N_HEADS);
-        assert_eq!(self.seq_len, SEQ_LEN);
-        assert_eq!(self.vocab_size, VOCAB_SIZE);
-    }
-
-    fn load(file: &mut File) -> Self {
-        let mut conf = Config {
-            dim: read_usize(file),
-            hidden_dim: read_usize(file),
-            n_layers: read_usize(file),
-            n_heads: read_usize(file),
-            n_kv_heads: read_usize(file),
-            vocab_size: 0,
-            seq_len: 0,
-            shared_weight: false,
-        };
-        let vocab_size = read_usize(file) as i32;
-        conf.vocab_size = vocab_size.abs() as usize;
-        conf.shared_weight = vocab_size > 0;
-        conf.seq_len = read_usize(file);
-        println!("Configuration: {conf:?}");
-        conf.check_static();
-        conf
+        // assert_eq!(self.dim as usize, DIM);
+        // assert_eq!(self.hidden_dim as usize, HIDDEN_DIM);
+        // assert_eq!(self.n_layers as usize, N_LAYERS);
+        // assert_eq!(self.n_heads as usize, N_HEADS);
+        // assert_eq!(self.vocab_size as usize, VOCAB_SIZE);
     }
 }
 
 struct RunState {
-    // current wave of activations
-    x: [f32; DIM],             // activation at current time stamp (dim,)
-    xb: [f32; DIM],            // same, but inside a residual branch (dim,)
-    xb2: [f32; DIM],           // an additional buffer just for convenience (dim,)
-    hb: [f32; HIDDEN_DIM],     // buffer for hidden dimension in the ffn (hidden_dim,)
-    hb2: [f32; HIDDEN_DIM],    // buffer for hidden dimension in the ffn (hidden_dim,)
-    q: [f32; DIM],             // query (dim,)
-    k: [f32; KV_DIM],          // key (dim,)
-    v: [f32; KV_DIM],          // value (dim,)
-    att: Vec<[f32; SEQ_LEN]>,  // buffer for scores/attention values (n_heads, seq_len)
-    logits: [f32; VOCAB_SIZE], // output logits
     // kv cache
     key_cache: Vec<Vec<[[f32; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
     value_cache: Vec<Vec<[[f32; HEAD_SIZE]; N_KV_HEADS]>>, // (layer, seq_len, dim)
@@ -334,16 +374,6 @@ struct RunState {
 impl RunState {
     fn new() -> Box<Self> {
         Box::new(RunState {
-            x: [0.0; DIM],
-            xb: [0.0; DIM],
-            xb2: [0.0; DIM],
-            hb: [0.0; HIDDEN_DIM],
-            hb2: [0.0; HIDDEN_DIM],
-            q: [0.0; DIM],
-            k: [0.0; KV_DIM],
-            v: [0.0; KV_DIM],
-            att: vec![[0.0; SEQ_LEN]; N_HEADS],
-            logits: [0.0; VOCAB_SIZE],
             key_cache: vec![vec![[[0.0; HEAD_SIZE]; N_KV_HEADS]; SEQ_LEN]; N_LAYERS],
             value_cache: vec![vec![[[0.0; HEAD_SIZE]; N_KV_HEADS]; SEQ_LEN]; N_LAYERS],
         })
@@ -360,15 +390,15 @@ struct Tokenizer {
 }
 
 impl Tokenizer {
-    fn load(file: &mut File, config: &Config) -> Tokenizer {
+    fn load(file: &mut File) -> Tokenizer {
         // read in the tokenizer.bin file
         let mut tokenizer = Tokenizer {
-            vocab: Vec::with_capacity(config.vocab_size),
-            vocab_scores: Vec::with_capacity(config.vocab_size),
+            vocab: Vec::with_capacity(VOCAB_SIZE),
+            vocab_scores: Vec::with_capacity(VOCAB_SIZE),
             max_token_length: 0u32 as usize,
         };
         tokenizer.max_token_length = read_usize(file);
-        for _ in 0..config.vocab_size {
+        for _ in 0..VOCAB_SIZE {
             tokenizer.vocab_scores.push(read_float(file));
             let len = read_usize(file);
             tokenizer.vocab.push(read_str(file, len));
@@ -433,25 +463,21 @@ impl Tokenizer {
 // neural net blocks
 
 fn accum(a: &mut [f32], b: &[f32]) {
-    for i in 0..a.len() {
-        a[i] += b[i];
+    for (a_i, b_i) in a.iter_mut().zip(b) {
+        *a_i += b_i;
     }
 }
 
-fn rmsnorm(o: &mut [f32; DIM], xo: Option<&[f32]>, weight: &[f32; DIM]) {
+fn rmsnorm(o: &mut [f32], xo: Option<&[f32]>, weight: &[f32]) {
     // calculate sum of squares
-    let mut ss: f32 = 0.0;
-    for i in 0..DIM {
-        let x = xo.unwrap_or(o);
-        ss += x[i] * x[i];
-    }
+    let mut ss = xo.unwrap_or(o).iter().fold(0.0, |acc, x| acc + x * x);
     ss /= DIM as f32;
     ss += 1e-5;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
-    for j in 0..DIM {
+    for (j, weight_j) in weight.iter().enumerate() {
         // Solve some borrow nonsense.
-        o[j] = weight[j] * ss * (xo.unwrap_or(o)[j])
+        o[j] = weight_j * ss * (xo.unwrap_or(o)[j])
     }
 }
 
@@ -478,141 +504,208 @@ fn dot(q: &[f32], k: &[f32]) -> f32 {
         .sum::<f32>()
 }
 
-fn transformer(token: usize, pos: usize, s: &mut RunState, w: &TWeights) {
-    // a few convenience variables
-    let x = &mut s.x;
+fn silu(s: &mut [f32], s2: &[f32]) {
+    /// F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
+    for (s_i, s2_i) in s.iter_mut().zip(s2) {
+        *s_i = *s_i * (1.0 / (1.0 + (-*s_i).exp()));
+        // elementwise multiply with w3(x)
+        *s_i = *s_i * s2_i;
+    }
+}
 
-    // copy the token embedding into x
-    x.copy_from_slice(&w.token_embedding_table[token]);
-
-    // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    let freq_cis_real_row = &w.freq_cis_real[pos];
-    let freq_cis_imag_row = &w.freq_cis_imag[pos];
-    // forward all the layers
-    for l in 0..N_LAYERS {
-        // attention rmsnorm
-        rmsnorm(&mut s.xb, Some(x), &w.rms_att_weight[l]);
-
-        // qkv matvecs for this position
-        w.wq[l].matvec(&mut s.q, &s.xb);
-        w.wk[l].matvec(&mut s.k, &s.xb);
-        w.wv[l].matvec(&mut s.v, &s.xb);
-
-        // apply RoPE rotation to the q and k vectors for each head
-        for h in 0..N_HEADS {
-            // get the q and k vectors for this head
-            let q = &mut s.q[h * HEAD_SIZE..];
-
-            // rotate q and k by the freq_cis_real and freq_cis_imag
-            for i in (0..HEAD_SIZE).step_by(2) {
-                let q0 = q[i];
-                let q1 = q[i + 1];
-                let fcr = freq_cis_real_row[i / 2];
-                let fci = freq_cis_imag_row[i / 2];
-                q[i + 0] = q0 * fcr - q1 * fci;
-                q[i + 1] = q0 * fci + q1 * fcr;
-                if h < N_KV_HEADS {
-                    let k = &mut s.k[h * HEAD_SIZE..];
-                    let k0 = k[i];
-                    let k1 = k[i + 1];
-                    k[i + 0] = k0 * fcr - k1 * fci;
-                    k[i + 1] = k0 * fci + k1 * fcr;
-                }
-            }
+fn rope(queries: &mut [f32], keys: &mut [f32], freq_cis_real: &[f32], freq_cis_imag: &[f32]) {
+    // Apply RoPE rotation to the q and k vectors for each head
+    let mut qs = queries.chunks_exact_mut(HEAD_SIZE);
+    let mut ks = keys.chunks_exact_mut(HEAD_SIZE);
+    for q in qs {
+        // rotate q and k by the freq_cis_real and freq_cis_imag
+        for (i, q) in q.chunks_exact_mut(2).enumerate() {
+            let fcr = freq_cis_real[i / 2];
+            let fci = freq_cis_imag[i / 2];
+            q[0] = q[0] * fcr - q[1] * fci;
+            q[1] = q[0] * fci + q[1] * fcr;
+            ks.next().map(|k| {
+                k[0] = k[0] * fcr - k[1] * fci;
+                k[1] = k[0] * fci + k[1] * fcr;
+            });
         }
+    }
+}
 
-        // save key,value at this time step (pos) to our kv cache
-        let key_cache_row = &mut s.key_cache[l][pos];
-        let value_cache_row = &mut s.value_cache[l][pos];
-
-        for h in 0..N_KV_HEADS {
-            for d in 0..HEAD_SIZE {
-                key_cache_row[h][d] = s.k[h * HEAD_SIZE + d];
-                value_cache_row[h][d] = s.v[h * HEAD_SIZE + d];
-            }
-        }
+fn multihead_attention(
+    out: &mut Vec<[f32; DIM]>,
+    queries: &Vec<[f32; DIM]>,
+    value_cache: &[[[f32; HEAD_SIZE]; N_KV_HEADS]],
+    key_cache: &[[[f32; HEAD_SIZE]; N_KV_HEADS]],
+    pos: &Vec<usize>,
+) {
+    for (i, pos) in pos.into_iter().enumerate() {
+        let mut out = &mut out[i];
+        let queries = &queries[i];
 
         // multihead attention. iterate over all heads
         // We do this a bit differently in rust.
         // Chunk things up so that each head is a separate slice.
-        let xbs: Vec<&mut [f32]> = s.xb.chunks_mut(HEAD_SIZE).collect();
-        let qs: Vec<&[f32]> = s.q.chunks(HEAD_SIZE).collect();
-        assert_eq!(xbs.len(), s.att.len());
-        s.att
-            .par_iter_mut()
-            .zip(xbs)
-            .enumerate()
-            .for_each(|(h, (att, xb))| {
-                // get the query vector for this head
-                let q = &qs[h];
-                // attention scores for this head
-                //let mut att = &mut s.att[h * p.seq_len..];
-                // iterate over all timesteps, including the current one
-                for t in 0..=pos {
-                    // get the key vector for this head and at this timestep
-                    let k = &s.key_cache[l][t][h / ATTN_GROUPS];
-                    // calculate the attention score as the dot product of q and k
-                    let score = dot(q, k) / (HEAD_SIZE as f32).sqrt();
-                    // save the score to the attention buffer
-                    att[t] = score;
+        let mut xbs: Vec<&mut [f32]> = out.chunks_mut(HEAD_SIZE).collect();
+        let qs: Vec<&[f32]> = queries.chunks_exact(HEAD_SIZE).collect();
+
+        xbs.par_iter_mut().enumerate().for_each(|(h, xb)| {
+            // get the query vector for this head
+            let q = qs[h];
+            let mut att = [0.0; SEQ_LEN];
+            // attention scores for this head
+            // iterate over all timesteps, including the current one
+            for (t, att_t) in (0..=*pos).zip(att.iter_mut()) {
+                // get the key vector for this head and at this timestep
+                let k = &key_cache[t][h / ATTN_GROUPS];
+                // calculate the attention score as the dot product of q and k
+                *att_t = dot(q, k) / (HEAD_SIZE as f32).sqrt();
+            }
+
+            // softmax the scores to get attention weights, from 0..pos inclusively
+            softmax(&mut att[..=*pos]);
+
+            xb.fill(0.0);
+            // weighted sum of the values, store back into xb
+            for t in 0..=*pos {
+                // get the value vector for this head and at this timestep
+                let v = &value_cache[t][h / ATTN_GROUPS];
+                // accumulate the weighted value into xb
+                for (xb_i, v_i) in xb.iter_mut().zip(v) {
+                    *xb_i += att[t] * v_i;
                 }
+            }
+        });
+    }
+}
 
-                // softmax the scores to get attention weights, from 0..pos inclusively
-                softmax(&mut att[..=pos]);
+fn transformer(
+    logits: &mut Vec<[f32; VOCAB_SIZE]>,
+    tokens: &Vec<usize>,
+    pos: &Vec<usize>,
+    s: &mut RunState,
+    w: &TWeights,
+) {
+    let BATCH = tokens.len();
 
-                // weighted sum of the values, store back into xb
-                //let xb = &mut s.xb[h * head_size..];
-                for i in 0..HEAD_SIZE {
-                    xb[i] = 0.0;
-                }
-                for t in 0..=pos {
-                    // get the value vector for this head and at this timestep
-                    let v = &s.value_cache[l][t][h / ATTN_GROUPS];
-                    // get the attention weight for this timestep
-                    let a = att[t];
-                    // accumulate the weighted value into xb
-                    for i in 0..HEAD_SIZE {
-                        xb[i] += a * v[i];
-                    }
-                }
-            });
+    // Run state
+    let mut x = vec![[0.0; DIM]; 1].repeat(BATCH);
 
-        // final matvec to get the output of the attention
-        w.wo[l].matvec(&mut s.xb2, &s.xb);
-
-        // residual connection back into x
-        accum(x, &s.xb2);
-
-        // ffn rmsnorm
-        rmsnorm(&mut s.xb, Some(x), &w.rms_ffn_weight[l]);
-
-        // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
-        // first calculate self.w1(x) and self.w3(x)
-        w.w1[l].matvec(&mut s.hb, &s.xb);
-        w.w3[l].matvec(&mut s.hb2, &s.xb);
-
-        // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
-        for i in 0..HIDDEN_DIM {
-            s.hb[i] *= 1.0 / (1.0 + (-s.hb[i]).exp());
-        }
-
-        // elementwise multiply with w3(x)
-        for i in 0..HIDDEN_DIM {
-            s.hb[i] *= s.hb2[i];
-        }
-
-        // final matvec to get the output of the ffn
-        w.w2[l].matvec(&mut s.xb, &s.hb);
-
-        // residual connection
-        accum(x, &s.xb);
+    // copy the token embedding into x
+    for (x_i, token) in x.iter_mut().zip(tokens) {
+        x_i.copy_from_slice(&w.token_embedding_table[*token]);
     }
 
-    // final rmsnorm
-    rmsnorm(x, None, &w.rms_final_weight);
+    // pluck out the "pos" row of freq_cis_real and freq_cis_imag
+    let freq_cis_real_row: Vec<[f32; DIM / N_HEADS / 2]> =
+        pos.iter().map(|i| w.freq_cis_real[*i]).collect();
+    let freq_cis_imag_row: Vec<[f32; DIM / N_HEADS / 2]> =
+        pos.iter().map(|i| w.freq_cis_imag[*i]).collect();
 
-    // classifier into logits
-    w.wcls.matvec(&mut s.logits, &s.x);
+    let mut cache = vec![[0.0; DIM]; DIM];
+    let mut cache1 = vec![[0.0; DIM]; HIDDEN_DIM];
+    let mut cache2 = vec![[0.0; HIDDEN_DIM]; DIM];
+
+    // forward all the layers
+    for l in 0..N_LAYERS {
+        let mut xb = vec![[0.0; DIM]; 1].repeat(BATCH);
+        // qkv matvecs for this position
+
+        {
+            // Attention
+            let mut q = vec![[0.0; DIM]; 1].repeat(BATCH);
+            let mut k = vec![[0.0; KV_DIM]; 1].repeat(BATCH);
+            let mut v = vec![[0.0; KV_DIM]; 1].repeat(BATCH);
+
+            // attention rmsnorm
+            for (xb, x) in xb.iter_mut().zip(x.iter()) {
+                rmsnorm(xb, Some(x), &w.rms_att_weight[l]);
+            }
+            let c = Some(cache.as_mut_slice().try_into().expect(""));
+            w.wq[l].matvec(&mut q, &xb, c);
+            let c = Some(cache.as_mut_slice().try_into().expect(""));
+            w.wk[l].matvec(&mut k, &xb, c);
+            let c = Some(cache.as_mut_slice().try_into().expect(""));
+            w.wv[l].matvec(&mut v, &xb, c);
+            for i in 0..BATCH {
+                rope(
+                    &mut q[i],
+                    &mut k[i],
+                    &freq_cis_real_row[i],
+                    &freq_cis_imag_row[i],
+                );
+            }
+            // save key,value at this time step (pos) to our kv cache
+            for (i, pos) in pos.into_iter().enumerate() {
+                for (row, k) in s.key_cache[l][*pos]
+                    .iter_mut()
+                    .zip(k[i].chunks_exact(HEAD_SIZE))
+                {
+                    row.copy_from_slice(&k);
+                }
+                for (row, v) in s.value_cache[l][*pos]
+                    .iter_mut()
+                    .zip(v[i].chunks_exact(HEAD_SIZE))
+                {
+                    row.copy_from_slice(&v);
+                }
+            }
+
+            multihead_attention(
+                &mut xb,
+                &q,
+                &s.value_cache[l].as_slice(),
+                &s.key_cache[l].as_slice(),
+                pos,
+            );
+        }
+
+        {
+            // FFN
+            let mut xb2 = vec![[0.0; DIM]; 1].repeat(BATCH);
+            let mut hb = vec![[0.0; HIDDEN_DIM]; 1].repeat(BATCH);
+            let mut hb2 = vec![[0.0; HIDDEN_DIM]; 1].repeat(BATCH);
+            let c = Some(cache.as_mut_slice().try_into().expect(""));
+            // final matvec to get the output of the attention
+            w.wo[l].matvec(&mut xb2, &xb, c);
+
+            // residual connection back into x
+            for i in 0..BATCH {
+                accum(&mut x[i], &xb2[i]);
+                // ffn rmsnorm
+                rmsnorm(&mut xb[i], Some(&x[i]), &w.rms_ffn_weight[l]);
+            }
+
+            // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
+            // first calculate self.w1(x) and self.w3(x)
+            let c = Some(cache1.as_mut_slice().try_into().expect(""));
+            w.w1[l].matvec(&mut hb, &xb, c);
+            let c = Some(cache1.as_mut_slice().try_into().expect(""));
+            w.w3[l].matvec(&mut hb2, &xb, c);
+
+            for (hb, hb2) in hb.iter_mut().zip(hb2.iter()) {
+                silu(hb, hb2);
+            }
+
+            // final matvec to get the output of the ffn
+            let c = Some(cache2.as_mut_slice().try_into().expect(""));
+            w.w2[l].matvec(&mut xb, &hb, c);
+        }
+        // residual connection
+        for (x, xb) in x.iter_mut().zip(xb.iter()) {
+            accum(x, xb);
+        }
+    }
+
+    if BATCH == 1 {
+        // final rmsnorm
+        for x in x.iter_mut() {
+            rmsnorm(x, None, &w.rms_final_weight);
+        }
+
+        // classifier into logits
+        w.wcls.matvec(logits, &x, None);
+    }
 }
 
 fn time_in_ms() -> i64 {
@@ -689,23 +782,23 @@ fn main() {
     let mut file = File::open(&checkpoint).unwrap();
 
     // Config
-    let config = Config::load(&mut file);
-    io::stdout().flush().expect("flush failed");
+    let mut buf = vec![0; mem::size_of::<Config>()];
+    file.read_exact(buf.as_mut_slice());
+    let config = unsafe { &*(buf.as_ptr() as *const Config) };
+    config.check_static();
     let start = file.seek(SeekFrom::Current(0)).unwrap();
     let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
     assert_eq!(mmap.len(), mem::size_of::<TWeights>());
-    // let mut content = Vec::new();
-    // file.read_to_end(&mut content);
     let weights: &'static TWeights = unsafe { &*(mmap.as_ptr() as *const TWeights) };
 
     // right now we cannot run for more than config.seq_len steps
-    if steps <= 0 || steps > config.seq_len {
-        steps = config.seq_len;
+    if steps <= 0 || steps > SEQ_LEN {
+        steps = SEQ_LEN;
     }
 
     let tokenizer = {
         let mut file = File::open("tokenizer.bin").unwrap();
-        Tokenizer::load(&mut file, &config)
+        Tokenizer::load(&mut file)
     };
 
     // create and init the application RunState
@@ -722,10 +815,33 @@ fn main() {
     let mut next; // will store the next token in the sequence
     let mut token: Token = 1; // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     let mut pos = 0; // position in the sequence
+
+    let mut tokens = Vec::from_iter([token]);
+    let mut positions = Vec::from_iter([pos]);
+    let mut raw_logits = vec![[0.0; VOCAB_SIZE]; 1];
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
+    for i in 0..prompt_tokens.len() {
+        let next = prompt_tokens[pos];
+        positions.push(pos);
+        tokens.push(next);
+        pos += 1;
+        token = next;
+        let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
+            &tokenizer.vocab[next][1..]
+        } else {
+            &tokenizer.vocab[next]
+        };
+        println!(" {}  ", token_str);
+    }
+    transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
+
     while pos < steps {
         // forward the transformer to get logits for the next token
-        transformer(token, pos, &mut state, &weights);
+        let tokens = Vec::from_iter([token]);
+        let positions = Vec::from_iter([pos]);
+     
+        transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
+        let mut logits = &mut raw_logits[0];
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
@@ -733,16 +849,16 @@ fn main() {
             // sample the next token
             if temperature == 0.0 {
                 // greedy argmax sampling: take the token with the highest probability
-                next = argmax(&state.logits);
+                next = argmax(logits);
             } else {
                 // apply the temperature to the logits
-                for q in 0..config.vocab_size {
-                    state.logits[q] /= temperature;
+                for q in 0..VOCAB_SIZE {
+                    logits[q] /= temperature;
                 }
                 // apply softmax to the logits to get the probabilities for next token
-                softmax(&mut state.logits[..VOCAB_SIZE]);
+                softmax(&mut logits[..VOCAB_SIZE]);
                 // we sample from this distribution to get the next token
-                next = random.sample(&state.logits, config.vocab_size);
+                next = random.sample(logits, VOCAB_SIZE);
             }
         };
         // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
