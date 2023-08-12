@@ -516,18 +516,18 @@ fn silu(s: &mut [f32], s2: &[f32]) {
 fn rope(queries: &mut [f32], keys: &mut [f32], freq_cis_real: &[f32], freq_cis_imag: &[f32]) {
     // Apply RoPE rotation to the q and k vectors for each head
     let mut qs = queries.chunks_exact_mut(HEAD_SIZE);
-    let mut ks = keys.chunks_exact_mut(HEAD_SIZE);
-    for q in qs {
+    //let mut ks: Vec<_> = keys.chunks_exact_mut(HEAD_SIZE).collect();
+    for (h , q) in qs.enumerate() {
         // rotate q and k by the freq_cis_real and freq_cis_imag
         for (i, q) in q.chunks_exact_mut(2).enumerate() {
             let fcr = freq_cis_real[i / 2];
             let fci = freq_cis_imag[i / 2];
             q[0] = q[0] * fcr - q[1] * fci;
             q[1] = q[0] * fci + q[1] * fcr;
-            ks.next().map(|k| {
-                k[0] = k[0] * fcr - k[1] * fci;
-                k[1] = k[0] * fci + k[1] * fcr;
-            });
+            if h < N_KV_HEADS {
+                keys[i + 0] = keys[i + 0] * fcr - keys[i + 1] * fci;
+                keys[i + 1] = keys[i + 0] * fci + keys[i + 1] * fcr;
+            }
         }
     }
 }
