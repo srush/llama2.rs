@@ -850,6 +850,7 @@ fn main() {
             if temperature == 0.0 {
                 // greedy argmax sampling: take the token with the highest probability
                 next = argmax(logits);
+                println!("{}", logits[next]);
             } else {
                 // apply the temperature to the logits
                 for q in 0..VOCAB_SIZE {
