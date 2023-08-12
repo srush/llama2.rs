@@ -828,6 +828,7 @@ fn main() {
     let mut raw_logits = vec![[0.0; VOCAB_SIZE]; 1];
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
     if true { 
+        start = time_in_ms();
         for i in 0..prompt_tokens.len() {
             let next = prompt_tokens[pos];
             positions.push(pos);
@@ -839,9 +840,15 @@ fn main() {
             } else {
                 &tokenizer.vocab[next]
             };
-            println!(" {}  ", token_str);
+            print!("{}  ", token_str);
         }
         transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
+    let end = time_in_ms();
+    println!(
+        "\nprefill achieved tok/s: {}",
+        (pos - 1) as f32 / (end - start) as f32 * 1000.0
+    );
+ 
     }
     while pos < steps {
         // forward the transformer to get logits for the next token
