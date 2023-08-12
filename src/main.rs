@@ -514,22 +514,29 @@ fn silu(s: &mut [f32], s2: &[f32]) {
 }
 
 fn rope(queries: &mut [f32], keys: &mut [f32], freq_cis_real: &[f32], freq_cis_imag: &[f32]) {
-    // Apply RoPE rotation to the q and k vectors for each head
-    let mut qs = queries.chunks_exact_mut(HEAD_SIZE);
-    //let mut ks: Vec<_> = keys.chunks_exact_mut(HEAD_SIZE).collect();
-    for (h , q) in qs.enumerate() {
+    for h in 0..N_HEADS {
+        // get the q and k vectors for this head
+        let q = &mut queries[h * HEAD_SIZE..];
+
         // rotate q and k by the freq_cis_real and freq_cis_imag
-        for (i, q) in q.chunks_exact_mut(2).enumerate() {
+        for i in (0..HEAD_SIZE).step_by(2) {
+            let q0 = q[i];
+            let q1 = q[i + 1];
             let fcr = freq_cis_real[i / 2];
             let fci = freq_cis_imag[i / 2];
-            q[0] = q[0] * fcr - q[1] * fci;
-            q[1] = q[0] * fci + q[1] * fcr;
+            q[i + 0] = q0 * fcr - q1 * fci;
+            q[i + 1] = q0 * fci + q1 * fcr;
             if h < N_KV_HEADS {
-                keys[i + 0] = keys[i + 0] * fcr - keys[i + 1] * fci;
-                keys[i + 1] = keys[i + 0] * fci + keys[i + 1] * fcr;
+                let k = &mut keys[h * HEAD_SIZE..];
+                let k0 = k[i];
+                let k1 = k[i + 1];
+                k[i + 0] = k0 * fcr - k1 * fci;
+                k[i + 1] = k0 * fci + k1 * fcr;
             }
         }
     }
+    // Apply RoPE rotation to the q and k vectors for each head
+
 }
 
 fn multihead_attention(
@@ -820,21 +827,21 @@ fn main() {
     let mut positions = Vec::from_iter([pos]);
     let mut raw_logits = vec![[0.0; VOCAB_SIZE]; 1];
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
-    if false { 
-    for i in 0..prompt_tokens.len() {
-        let next = prompt_tokens[pos];
-        positions.push(pos);
-        tokens.push(next);
-        pos += 1;
-        token = next;
-        let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
-            &tokenizer.vocab[next][1..]
-        } else {
-            &tokenizer.vocab[next]
-        };
-        println!(" {}  ", token_str);
-    }
-    transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
+    if true { 
+        for i in 0..prompt_tokens.len() {
+            let next = prompt_tokens[pos];
+            positions.push(pos);
+            tokens.push(next);
+            pos += 1;
+            token = next;
+            let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
+                &tokenizer.vocab[next][1..]
+            } else {
+                &tokenizer.vocab[next]
+            };
+            println!(" {}  ", token_str);
+        }
+        transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
     }
     while pos < steps {
         // forward the transformer to get logits for the next token
@@ -846,13 +853,13 @@ fn main() {
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
-            println!("{}", logits[next]);
+            // println!("{}", logits[next]);
         } else {
             // sample the next token
             if temperature == 0.0 {
                 // greedy argmax sampling: take the token with the highest probability
                 next = argmax(logits);
-                println!("{}", logits[next]);
+                // println!("{}", logits[next]);
             } else {
                 // apply the temperature to the logits
                 for q in 0..VOCAB_SIZE {
