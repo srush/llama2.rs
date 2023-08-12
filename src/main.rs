@@ -820,6 +820,7 @@ fn main() {
     let mut positions = Vec::from_iter([pos]);
     let mut raw_logits = vec![[0.0; VOCAB_SIZE]; 1];
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
+    if false { 
     for i in 0..prompt_tokens.len() {
         let next = prompt_tokens[pos];
         positions.push(pos);
@@ -834,7 +835,7 @@ fn main() {
         println!(" {}  ", token_str);
     }
     transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
-
+    }
     while pos < steps {
         // forward the transformer to get logits for the next token
         let tokens = Vec::from_iter([token]);
@@ -845,6 +846,7 @@ fn main() {
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
             next = prompt_tokens[pos];
+            println!("{}", logits[next]);
         } else {
             // sample the next token
             if temperature == 0.0 {
