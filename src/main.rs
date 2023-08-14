@@ -598,17 +598,21 @@ fn transformer(
     let freq_cis_imag_row: Vec<[f32; DIM / N_HEADS / 2]> =
         pos.iter().map(|i| w.freq_cis_imag[*i]).collect();
 
+    // FFN
+    let mut xb2 = vec![[0.0; DIM]; batch_size];
+    let mut hb = vec![[0.0; HIDDEN_DIM]; batch_size];
+    let mut hb2 = vec![[0.0; HIDDEN_DIM]; batch_size];
+    // Attention
+    let mut q = vec![[0.0; DIM]; batch_size];
+    let mut k = vec![[0.0; KV_DIM]; batch_size];
+    let mut v = vec![[0.0; KV_DIM]; batch_size];
+    let mut xb = vec![[0.0; DIM]; batch_size];
     // forward all the layers
     for l in 0..N_LAYERS {
-        let mut xb = vec![[0.0; DIM]; 1].repeat(batch_size);
+
         // qkv matvecs for this position
 
         {
-            // Attention
-            let mut q = vec![[0.0; DIM]; batch_size];
-            let mut k = vec![[0.0; KV_DIM]; batch_size];
-            let mut v = vec![[0.0; KV_DIM]; batch_size];
-
             // attention rmsnorm
             for (xb, x) in xb.iter_mut().zip(x.iter()) {
                 rmsnorm(xb, Some(x), &w.rms_att_weight[l]);
@@ -651,10 +655,6 @@ fn transformer(
          
         }
         {
-            // FFN
-            let mut xb2 = vec![[0.0; DIM]; batch_size];
-            let mut hb = vec![[0.0; HIDDEN_DIM]; batch_size];
-            let mut hb2 = vec![[0.0; HIDDEN_DIM]; batch_size];
 
 
             // final matvec to get the output of the attention
