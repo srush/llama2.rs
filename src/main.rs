@@ -605,9 +605,9 @@ fn transformer(
 
         {
             // Attention
-            let mut q = vec![[0.0; DIM]; 1].repeat(batch_size);
-            let mut k = vec![[0.0; KV_DIM]; 1].repeat(batch_size);
-            let mut v = vec![[0.0; KV_DIM]; 1].repeat(batch_size);
+            let mut q = vec![[0.0; DIM]; batch_size];
+            let mut k = vec![[0.0; KV_DIM]; batch_size];
+            let mut v = vec![[0.0; KV_DIM]; batch_size];
 
             // attention rmsnorm
             for (xb, x) in xb.iter_mut().zip(x.iter()) {
@@ -616,6 +616,8 @@ fn transformer(
             w.wq[l].matvec(&mut q, &xb);
             w.wk[l].matvec(&mut k, &xb);
             w.wv[l].matvec(&mut v, &xb);
+         
+
             for i in 0..batch_size {
                 rope(
                     &mut q[i],
@@ -646,13 +648,14 @@ fn transformer(
                 &s.key_cache[l].as_slice(),
                 pos,
             );
+         
         }
-
         {
             // FFN
-            let mut xb2 = vec![[0.0; DIM]; 1].repeat(batch_size);
-            let mut hb = vec![[0.0; HIDDEN_DIM]; 1].repeat(batch_size);
-            let mut hb2 = vec![[0.0; HIDDEN_DIM]; 1].repeat(batch_size);
+            let mut xb2 = vec![[0.0; DIM]; batch_size];
+            let mut hb = vec![[0.0; HIDDEN_DIM]; batch_size];
+            let mut hb2 = vec![[0.0; HIDDEN_DIM]; batch_size];
+
 
             // final matvec to get the output of the attention
             w.wo[l].matvec(&mut xb2, &xb);
@@ -677,10 +680,13 @@ fn transformer(
             w.w2[l].matvec(&mut xb, &hb);
 
         }
+
         // residual connection
         for (x, xb) in x.iter_mut().zip(xb.iter()) {
             accum(x, xb);
         }
+
+
     }
 
     if batch_size == 1 {
