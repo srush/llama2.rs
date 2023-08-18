@@ -1,7 +1,7 @@
 #![feature(portable_simd)]
 
 use memmap2::MmapOptions;
-use rayon::prelude::*;
+//use rayon::prelude::*;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem;
@@ -67,7 +67,7 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
     /// Rust note: x is passed by reference, xout as mutiple reference.    
     pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>) {
         for (xout, x) in xout.iter_mut().zip(x) {
-            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
+            xout.iter_mut().enumerate().for_each(|(i, v)| {
                 *v = self.w[i]
                     .iter()
                     .zip(x.iter())
@@ -89,7 +89,7 @@ impl<'a, const IN: usize, const OUT: usize> Linear2<'a, IN, OUT> {
     /// Rust note: par_iter_mut is from the RAYON library. It run in parallel.    
     pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>) {
         for (xout, x) in xout.iter_mut().zip(x) {
-            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
+            xout.iter_mut().enumerate().for_each(|(i, v)| {
                 *v = self.w[i]
                     .iter()
                     .zip(x.iter())
@@ -181,10 +181,20 @@ mod model {
             assert_eq!(ING, IN / 32 * BITS);
             assert_eq!(OUTG, OUT / 32 * BITS);
             assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
+            let batch_size = xout.len();
+            // // Transpose the input and output. 
+            let mut xout_temp  = (0..OUT).map(|i| xout.iter().map(|inner| inner[i].clone()).collect::<Vec<_>>()).flatten().collect::<Vec<f32>>();
 
-            // Transpose the input and output. 
-            let mut xout_temp: Vec<Vec<f32>>  =(0..OUT).map(|i| xout.iter().map(|inner| inner[i].clone()).collect()).collect();
-            
+            let mut x_temp = vec![[0.0; 8]; IN / 8 * batch_size];
+            for i in 0 .. IN / 8 {
+                for j in 0 .. batch_size {
+                    for k in 0 .. 8 {
+                    x_temp[i * batch_size + j][k] = x[j][i * 8 + k];
+                    }
+                }
+            }
+
+
             let mask = (1 << BITS) - 1;
             let elems_per_i32 = 32 / BITS;
             let ipg: usize = GROUPSIZE / 32 * BITS;
@@ -192,7 +202,8 @@ mod model {
             let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
 
             // Check the output.            
-            xout_temp.par_iter_mut()
+            xout_temp
+                .par_chunks_exact_mut(batch_size)
                 .enumerate()
                 .for_each(|(oi, o)| {
                     // Do K at a time
@@ -203,25 +214,24 @@ mod model {
                     self.scales[oi]
                         .into_iter()
                         .zip(qweight)
-                        .enumerate()
-                        .for_each(|(group, (scale, qweight))| {
-
-                            let qz = ((qzeros[group] >> (BITS * out_elem)) & mask) + 1;
+                        .zip(x_temp.chunks_exact(batch_size * GROUPSIZE/8))
+                        .zip(qzeros)
+                        .for_each(| (((scale, qweight), x_temp), qzs)| {
+                            let qz = ((qzs >> (BITS * out_elem)) & mask) + 1;
                             let scale_simd = f32x8::splat(scale);
                             let zero_simd = i32x8::splat(qz);
-                            let in_pos = group * GROUPSIZE;
                             qweight
                                 .iter()
-                                .enumerate()
-                                .for_each(|(j, v)| {
+                                .zip(x_temp.chunks_exact(batch_size))
+                                .for_each(|(v, x)| {
                                     //Extract v into 8 chunks
                                     let num_simd = i32x8::splat(*v);
                                     let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
                                     let combine: f32x8 = (qw - zero_simd).cast::<f32>();
                                     let weight: f32x8 = scale_simd * combine;
         
-                                    for (i, xout) in o.iter_mut().enumerate() {   
-                                        let x = f32x8::from_slice(&x[i][in_pos + j*8..][..8]);
+                                    for  (xout, x) in o.iter_mut().zip(x) {   
+                                        let x = f32x8::from_slice(x);
                                         *xout += (weight * x).reduce_sum();
                                     }
                                 })
@@ -229,7 +239,7 @@ mod model {
                 });
                 for i in 0..xout.len() {
                     for j in 0..OUT {
-                        xout[i][j] = xout_temp[j][i];
+                        xout[i][j] = xout_temp[j* batch_size + i];
                     }
                 }
             }
@@ -545,7 +555,7 @@ fn multihead_attention(
         let mut xbs: Vec<&mut [f32]> = out.chunks_mut(HEAD_SIZE).collect();
         let qs: Vec<&[f32]> = queries.chunks_exact(HEAD_SIZE).collect();
 
-        xbs.par_iter_mut().enumerate().for_each(|(h, xb)| {
+        xbs.iter_mut().enumerate().for_each(|(h, xb)| {
             // get the query vector for this head
             let q = qs[h];
             let mut att = [0.0; SEQ_LEN];
