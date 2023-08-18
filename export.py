@@ -101,7 +101,7 @@ def export(model2, filepath='model.bin'):
     print(f"wrote {filepath}")
 
 
-model_name_or_path = "TheBloke/orca_mini_v3_13B-GPTQ"
+model_name_or_path = "TheBloke/llama-2-7B-GPTQ"
 model_basename = "gptq_model-4bit-128g"
 
 
@@ -120,9 +120,9 @@ def load_and_export(model_path, output_path):
     #    print(a, b)
     #    print(a == b)
     
-    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-    print(inputs)
-    exit()
+    #inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+    #print(inputs)
+    #exit()
     # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
     # model_basename = "main"
 
