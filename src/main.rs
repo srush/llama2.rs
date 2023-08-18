@@ -1,7 +1,9 @@
 #![feature(portable_simd)]
 
+
+
 use memmap2::MmapOptions;
-//use rayon::prelude::*;
+use rayon::prelude::*;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem;
@@ -65,9 +67,9 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
     // by far the most amount of time is spent inside this little function
     /// Rust note: par_iter_mut is from the RAYON library. It run in parallel.
     /// Rust note: x is passed by reference, xout as mutiple reference.    
-    pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>) {
+    pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) {
         for (xout, x) in xout.iter_mut().zip(x) {
-            xout.iter_mut().enumerate().for_each(|(i, v)| {
+            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
                 *v = self.w[i]
                     .iter()
                     .zip(x.iter())
@@ -89,7 +91,7 @@ impl<'a, const IN: usize, const OUT: usize> Linear2<'a, IN, OUT> {
     /// Rust note: par_iter_mut is from the RAYON library. It run in parallel.    
     pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>) {
         for (xout, x) in xout.iter_mut().zip(x) {
-            xout.iter_mut().enumerate().for_each(|(i, v)| {
+            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
                 *v = self.w[i]
                     .iter()
                     .zip(x.iter())
@@ -144,9 +146,8 @@ mod model {
 #[cfg(quant = "Q_4_128")]
 mod model {
     /// Code for quantized SIMD implementation.
-    use rayon::prelude::*;
     use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
-
+    use rayon::prelude::*;
     ///
     const fn int_div_up(x: usize, y: usize) -> usize {
         x / y + if x % y == 0 { 0 } else { 1 }
@@ -168,7 +169,7 @@ mod model {
         qzeros: [[i32; GROUPS]; OUTG],
         scales: [[f32; GROUPS]; OUT],
     }
-
+    
     impl<
             const IN: usize,
             const OUT: usize,
@@ -177,20 +178,27 @@ mod model {
             const OUTG: usize,
         > QLinear<IN, OUT, GROUPS, ING, OUTG>
     {
-        pub fn matvec(self: &Self, xout: &mut Vec<[f32; OUT]>, x: &Vec<[f32; IN]>) {
+        pub fn matvec<const B:usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) {
             assert_eq!(ING, IN / 32 * BITS);
             assert_eq!(OUTG, OUT / 32 * BITS);
             assert_eq!(GROUPS, int_div_up(IN, GROUPSIZE));
-            let batch_size = xout.len();
+            //B = xout.len();
             // // Transpose the input and output. 
-            let mut xout_temp  = (0..OUT).map(|i| xout.iter().map(|inner| inner[i].clone()).collect::<Vec<_>>()).flatten().collect::<Vec<f32>>();
-
-            let mut x_temp = vec![[0.0; 8]; IN / 8 * batch_size];
+            let mut xout_temp = [[0.0; B]; OUT];
+            for i in 0 .. OUT {
+                for j in 0 .. B {
+                    xout_temp[i][j] = xout[j][i];
+                }
+            }
+            let z = f32x8::splat(0.0);
+            // This should be IN / 8 but rust can't handle this statically.
+            let mut x_temp = [[z; B]; IN];
             for i in 0 .. IN / 8 {
-                for j in 0 .. batch_size {
-                    for k in 0 .. 8 {
-                    x_temp[i * batch_size + j][k] = x[j][i * 8 + k];
-                    }
+                for j in 0 .. B {
+                    //for k in 0 .. 8 {
+//                        x_temp[i * B + j][k] = x[j][i * 8 + k];
+                        x_temp[i][j] = f32x8::from_slice(&x[j][i * 8..][..8]);
+                    //}
                 }
             }
 
@@ -201,45 +209,50 @@ mod model {
             let mask_4bits = i32x8::splat(mask);
             let shift_right = i32x8::from_array([0, 4, 8, 12, 16, 20, 24, 28]);
 
-            // Check the output.            
+            // Check the output.   
             xout_temp
-                .par_chunks_exact_mut(batch_size)
-                .enumerate()
-                .for_each(|(oi, o)| {
+                .par_iter_mut()
+                .enumerate().for_each(|(oi, o)| {
                     // Do K at a time
                     let qzeros = &self.qzeros[oi / elems_per_i32];
                     let out_elem = oi % elems_per_i32;
                     let qweight = self.qweight[oi].chunks_exact(ipg);
+                    let mut sum = [z; B];
                     o.fill(0.0);
-                    self.scales[oi]
+                    for (((scale, qweight), x_temp), qzs) in 
+                        self.scales[oi]
                         .into_iter()
                         .zip(qweight)
-                        .zip(x_temp.chunks_exact(batch_size * GROUPSIZE/8))
-                        .zip(qzeros)
-                        .for_each(| (((scale, qweight), x_temp), qzs)| {
+                        .zip(x_temp.chunks_exact(GROUPSIZE/8))
+                        .zip(qzeros) {
                             let qz = ((qzs >> (BITS * out_elem)) & mask) + 1;
                             let scale_simd = f32x8::splat(scale);
                             let zero_simd = i32x8::splat(qz);
-                            qweight
-                                .iter()
-                                .zip(x_temp.chunks_exact(batch_size))
-                                .for_each(|(v, x)| {
+                            
+                            for (&v, x) in qweight
+                                .into_iter()
+                                .zip(x_temp) { 
                                     //Extract v into 8 chunks
-                                    let num_simd = i32x8::splat(*v);
+                                    let num_simd = i32x8::splat(v);
                                     let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
                                     let combine: f32x8 = (qw - zero_simd).cast::<f32>();
                                     let weight: f32x8 = scale_simd * combine;
         
-                                    for  (xout, x) in o.iter_mut().zip(x) {   
-                                        let x = f32x8::from_slice(x);
-                                        *xout += (weight * x).reduce_sum();
+                                    for  (&x, s) in x.iter().zip(sum.iter_mut()) {   
+                                        //let x = f32x8::from_slice(x);
+                                        //*xout += (weight * x).reduce_sum();
+                                        *s += weight * x;
                                     }
-                                })
-                        });
-                });
+                            }
+                        }
+                        for (xout, s) in o.iter_mut().zip(sum) {
+                            *xout += s.reduce_sum();    
+                        }
+                    });
+        
                 for i in 0..xout.len() {
                     for j in 0..OUT {
-                        xout[i][j] = xout_temp[j* batch_size + i];
+                        xout[i][j] = xout_temp[j][i];
                     }
                 }
             }
@@ -539,11 +552,11 @@ fn rope(queries: &mut [f32], keys: &mut [f32], freq_cis_real: &[f32], freq_cis_i
 }
 
 fn multihead_attention(
-    out: &mut Vec<[f32; DIM]>,
-    queries: &Vec<[f32; DIM]>,
+    out: &mut [[f32; DIM]],
+    queries: &[[f32; DIM]],
     value_cache: &[[[f32; HEAD_SIZE]; N_KV_HEADS]],
     key_cache: &[[[f32; HEAD_SIZE]; N_KV_HEADS]],
-    pos: &Vec<usize>,
+    pos: &[usize],
 ) {
     for (i, pos) in pos.into_iter().enumerate() {
         let out = &mut out[i];
@@ -555,7 +568,7 @@ fn multihead_attention(
         let mut xbs: Vec<&mut [f32]> = out.chunks_mut(HEAD_SIZE).collect();
         let qs: Vec<&[f32]> = queries.chunks_exact(HEAD_SIZE).collect();
 
-        xbs.iter_mut().enumerate().for_each(|(h, xb)| {
+        xbs.par_iter_mut().enumerate().for_each(|(h, xb)| {
             // get the query vector for this head
             let q = qs[h];
             let mut att = [0.0; SEQ_LEN];
@@ -585,17 +598,16 @@ fn multihead_attention(
     }
 }
 
-fn transformer(
-    logits: &mut Vec<[f32; VOCAB_SIZE]>,
-    tokens: &Vec<usize>,
-    pos: &Vec<usize>,
+fn transformer<const B:usize>(
+    logits: &mut [[f32; VOCAB_SIZE]; 1],
+    tokens: &[usize; B],
+    pos: &[usize;B],
     s: &mut RunState,
     w: &TWeights,
 ) {
-    let batch_size = tokens.len();
 
     // Run state
-    let mut x = vec![[0.0; DIM]; 1].repeat(batch_size);
+    let mut x = [[0.0; DIM]; B];
 
     // copy the token embedding into x
     for (x_i, token) in x.iter_mut().zip(tokens) {
@@ -609,14 +621,14 @@ fn transformer(
         pos.iter().map(|i| w.freq_cis_imag[*i]).collect();
 
     // FFN
-    let mut xb2 = vec![[0.0; DIM]; batch_size];
-    let mut hb = vec![[0.0; HIDDEN_DIM]; batch_size];
-    let mut hb2 = vec![[0.0; HIDDEN_DIM]; batch_size];
+    let mut xb2 = [[0.0; DIM]; B];
+    let mut hb = [[0.0; HIDDEN_DIM]; B];
+    let mut hb2 = [[0.0; HIDDEN_DIM]; B];
     // Attention
-    let mut q = vec![[0.0; DIM]; batch_size];
-    let mut k = vec![[0.0; KV_DIM]; batch_size];
-    let mut v = vec![[0.0; KV_DIM]; batch_size];
-    let mut xb = vec![[0.0; DIM]; batch_size];
+    let mut q = [[0.0; DIM]; B];
+    let mut k = [[0.0; KV_DIM]; B];
+    let mut v = [[0.0; KV_DIM]; B];
+    let mut xb = [[0.0; DIM]; B];
     // forward all the layers
     for l in 0..N_LAYERS {
 
@@ -627,12 +639,12 @@ fn transformer(
             for (xb, x) in xb.iter_mut().zip(x.iter()) {
                 rmsnorm(xb, Some(x), &w.rms_att_weight[l]);
             }
-            w.wq[l].matvec(&mut q, &xb);
+            w.wq[l].matvec(&mut q, &xb) ;
             w.wk[l].matvec(&mut k, &xb);
             w.wv[l].matvec(&mut v, &xb);
          
 
-            for i in 0..batch_size {
+            for i in 0..B {
                 rope(
                     &mut q[i],
                     &mut k[i],
@@ -671,7 +683,7 @@ fn transformer(
             w.wo[l].matvec(&mut xb2, &xb);
 
             // residual connection back into x
-            for i in 0..batch_size {
+            for i in 0..B {
                 accum(&mut x[i], &xb2[i]);
                 // ffn rmsnorm
                 rmsnorm(&mut xb[i], Some(&x[i]), &w.rms_ffn_weight[l]);
@@ -699,14 +711,14 @@ fn transformer(
 
     }
 
-    if batch_size == 1 {
+    if B == 1 {
         // final rmsnorm
         for x in x.iter_mut() {
             rmsnorm(x, None, &w.rms_final_weight);
         }
 
         // classifier into logits
-        w.wcls.matvec(logits, &x);
+        w.wcls.matvec(logits, &x[..1].try_into().expect("size"));
     }
 }
 
@@ -756,6 +768,37 @@ impl Random {
         n - 1 // in case of rounding errors
     }
 }
+
+
+fn prefill<const A:usize>(pos:&mut usize, 
+                          state:&mut RunState, 
+                          prompt_tokens: &Vec<usize>,
+                          tokenizer: &Tokenizer, 
+                          weights: &TWeights) {
+
+    while *pos + A <= prompt_tokens.len() {
+        let mut tokens = [0;A];
+        let mut positions = [0; A];
+        let mut fake_logits = [[0.0; VOCAB_SIZE]; 1];
+        for i in 0..A {
+            let next = prompt_tokens[*pos];
+            positions[i] = *pos;
+            tokens[i] = next;
+            *pos += 1;
+            let token = next;
+            let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
+                &tokenizer.vocab[next][1..]
+            } else {
+                &tokenizer.vocab[next]
+            };
+            print!("{}", token_str);
+            io::stdout().flush().expect("flush failed");
+        }
+        transformer(&mut fake_logits, &tokens, &positions, state, &weights);
+    }
+}
+
+
 
 fn main() {
     // poor man's Rust argparse
@@ -816,37 +859,21 @@ fn main() {
     let mut token: Token = 1; // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     let mut pos = 0; // position in the sequence
 
-    let mut tokens = Vec::from_iter([token]);
-    let mut positions = Vec::from_iter([pos]);
-    let mut raw_logits = vec![[0.0; VOCAB_SIZE]; 1];
+    let mut raw_logits = [[0.0; VOCAB_SIZE]; 1];
     println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
-    if true { 
-        start = time_in_ms();
-        for _ in 0..prompt_tokens.len() {
-            let next = prompt_tokens[pos];
-            positions.push(pos);
-            tokens.push(next);
-            pos += 1;
-            token = next;
-            let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
-                &tokenizer.vocab[next][1..]
-            } else {
-                &tokenizer.vocab[next]
-            };
-            print!("{}  ", token_str);
-        }
-        transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
-    let end = time_in_ms();
-    println!(
-        "\nprefill achieved tok/s: {}",
-        (pos - 1) as f32 / (end - start) as f32 * 1000.0
-    );
- 
-    }
+    
+    // Do a little backoff to handle different sizes.This costs us compilation time, 
+    // But allows us to compile versions of with the longest lnength prefill possible.
+    prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    
     while pos < steps {
         // forward the transformer to get logits for the next token
-        let tokens = Vec::from_iter([token]);
-        let positions = Vec::from_iter([pos]);
+        let tokens = [token];
+        let positions = [pos];
      
         transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
         let logits = &mut raw_logits[0];
