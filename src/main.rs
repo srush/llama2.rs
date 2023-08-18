@@ -1,7 +1,7 @@
 #![feature(portable_simd)]
 
 
-
+use unicode_script::{get_script, Script};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use std::fs::File;
@@ -320,7 +320,8 @@ fn read_str(file: &mut File, len: usize) -> String {
 
 fn str_lookup(str: &str, vocab: &[String]) -> Option<usize> {
     // find the first perfect match for str in vocab, return its index or -1 if not found
-    vocab.into_iter().position(|x| x == str)
+    let x = vocab.into_iter().skip(260).position(|x| x == str).map(|x| x + 260);
+    x.or(vocab.into_iter().position(|x| x == str))
 }
 
 fn argmax(v: &[f32]) -> usize {
@@ -410,16 +411,20 @@ impl Tokenizer {
             max_token_length: 0u32 as usize,
         };
         tokenizer.max_token_length = read_usize(file);
-        for _ in 0..VOCAB_SIZE {
+        for i in 0..VOCAB_SIZE {
             tokenizer.vocab_scores.push(read_float(file));
             let len = read_usize(file);
             tokenizer.vocab.push(read_str(file, len));
+            //println!("{} {:?} {:?}", i, tokenizer.vocab[i], tokenizer.vocab_scores[i]);
         }
         tokenizer
     }
 
     fn bpe_encode(self: &Self, text: &str) -> Vec<Token> {
         let mut tokens: Vec<Token> = Vec::new();
+        let mut scripts: Vec<Script> = Vec::new();
+        let mut digits: Vec<bool> = Vec::new();
+        let mut spaces: Vec<bool> = Vec::new();
         let mut str_buffer = String::new();
 
         // first encode every individual byte in the input string
@@ -428,6 +433,9 @@ impl Tokenizer {
             str_buffer.push(c);
             let id = str_lookup(&str_buffer, self.vocab.as_slice()).expect("not good");
             tokens.push(id);
+            scripts.push(get_script(c));
+            digits.push(c.is_digit(10));
+            spaces.push(c == ' ');
         }
 
         // merge the best consecutive pair each iteration, according the scores in vocab_scores
@@ -439,8 +447,18 @@ impl Tokenizer {
             for i in 0..(tokens.len() - 1) {
                 // check if we can merge the pair (tokens[i], tokens[i+1])
                 str_buffer.clear();
-                str_buffer.push_str(&self.vocab[tokens[i]]);
-                str_buffer.push_str(&self.vocab[tokens[i + 1] as usize]);
+                // if scripts[i] != scripts[i+1] {
+                //     // Split scripts (from sentence piece)
+                //     continue;
+                // }
+                // if digits[i] || (digits[i+1] && !spaces[i]) {
+                //     // Split digits (from sentence piece)  
+                //     continue;
+                // }
+                let item1 = &self.vocab[tokens[i]];
+                let item2 = &self.vocab[tokens[i + 1]];
+                str_buffer.push_str(item1);
+                str_buffer.push_str(item2);
                 let id = str_lookup(&str_buffer, self.vocab.as_slice());
                 match id {
                     Some(id) => {
@@ -454,17 +472,26 @@ impl Tokenizer {
                     None => {}
                 }
             }
-
+            //for t in &tokens {
+            //    print!("{}|", self.vocab[*t]);
+            //}
+            //println!("");
+            //println!("{:?}", tokens);
             match best_idx {
                 None => return tokens, // we couldn't find any more pairs to merge, so we're done
                 Some(best_idx) => {
                     // merge the consecutive pair (best_idx, best_idx+1) into new token best_id
                     tokens[best_idx] = best_id;
+
                     // delete token at position best_idx+1, shift the entire sequence back 1
                     for i in (best_idx + 1)..(tokens.len() - 1) {
                         tokens[i] = tokens[i + 1];
+                        scripts[i] = scripts[i + 1];
+                        digits[i] = digits[i + 1];
+                        spaces[i] = spaces[i + 1];
                     }
                     tokens.pop(); // token length decreased
+                    scripts.pop();
                 }
             }
         }
@@ -781,9 +808,11 @@ fn prefill<const A:usize>(pos:&mut usize,
         let mut positions = [0; A];
         let mut fake_logits = [[0.0; VOCAB_SIZE]; 1];
         for i in 0..A {
-            let next = prompt_tokens[*pos];
+            let next = if *pos == 0 {1 } else {prompt_tokens[*pos - 1]};
             positions[i] = *pos;
             tokens[i] = next;
+            //println!("{} {} {} {}", i, *pos, tokens[i], positions[i]);
+            // Printing.
             *pos += 1;
             let token = next;
             let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
@@ -794,7 +823,7 @@ fn prefill<const A:usize>(pos:&mut usize,
             print!("{}", token_str);
             io::stdout().flush().expect("flush failed");
         }
-        transformer(&mut fake_logits, &tokens, &positions, state, &weights);
+        transformer(&mut fake_logits, &tokens, &positions,  state, &weights);
     }
 }
 
@@ -853,6 +882,7 @@ fn main() {
         Vec::new()
     };
 
+    //println!("{:?}", prompt_tokens);
     // start the main loop
     let mut start = 0; // used to time our code, only initialized after first iteration
     let mut next; // will store the next token in the sequence
@@ -860,16 +890,17 @@ fn main() {
     let mut pos = 0; // position in the sequence
 
     let mut raw_logits = [[0.0; VOCAB_SIZE]; 1];
-    println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
+    //println!("<s>"); // explicit print the initial BOS token for stylistic symmetry reasons
     
     // Do a little backoff to handle different sizes.This costs us compilation time, 
     // But allows us to compile versions of with the longest lnength prefill possible.
+    start = time_in_ms();
     prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    
+    prefill::<1>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    token = prompt_tokens[pos-1];
     while pos < steps {
         // forward the transformer to get logits for the next token
         let tokens = [token];
@@ -913,9 +944,9 @@ fn main() {
         token = next;
         pos += 1;
         // init our timer here because the first iteration is slow due to memmap
-        if start == 0 {
-            start = time_in_ms();
-        }
+        // if start == 0 {
+        //     start = time_in_ms();
+        // }
     }
 
     // report achieved tok/s

@@ -8,7 +8,7 @@ from pathlib import Path
 import json
 import torch
 from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-
+from transformers import AutoTokenizer
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
@@ -101,12 +101,28 @@ def export(model2, filepath='model.bin'):
     print(f"wrote {filepath}")
 
 
-model_name_or_path = "TheBloke/llama-2-7b-Guanaco-QLoRA-GPTQ"
+model_name_or_path = "TheBloke/orca_mini_v3_13B-GPTQ"
 model_basename = "gptq_model-4bit-128g"
 
 
 def load_and_export(model_path, output_path):
+    tokenizer = AutoTokenizer.from_pretrained("TheBloke/orca_mini_v3_13B-GPTQ")
+    prompt = "### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n### User:\nTell me about Orcas.\n\n### Assistant:\n"
+    x = tokenizer.backend_tokenizer.normalizer.normalize_str(prompt)
+    #rev = {v: k for k, v in tokenizer.get_vocab().items()}
+    #for i in range(32000):
+    #    print(i, rev[i])
+    #print(dir(tokenizer.backend_tokenizer.normalizer))
+    #prompt = "1000"
 
+
+    #for a, b in zip(prompt, x[1:]):
+    #    print(a, b)
+    #    print(a == b)
+    
+    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+    print(inputs)
+    exit()
     # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
     # model_basename = "main"
 

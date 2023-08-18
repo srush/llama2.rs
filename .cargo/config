@@ -2,4 +2,4 @@
 rustflags = ["-C", "target-feature=+avx,+avx2,+fma,+sse3",
              "-C", "target-cpu=native",
              "-C", "link-args=-Wl,-zstack-size=419430400",
-	     "--cfg", 'model_size="13B"', "--cfg", 'quant="Q_4_128"']
+     	     "--cfg", 'model_size="13B"', "--cfg", 'quant="Q_4_128"']
