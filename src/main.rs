@@ -510,8 +510,10 @@ fn accum(a: &mut [f32], b: &[f32]) {
 fn rmsnorm(o: &mut [f32], xo: Option<&[f32]>, weight: &[f32]) {
     // calculate sum of squares
     let mut ss = xo.unwrap_or(o).iter().fold(0.0, |acc, x| acc + x * x);
+    
+    // take mean
     ss /= DIM as f32;
-    ss += 1e-5;
+    ss += 1e-6;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
     for (j, weight_j) in weight.iter().enumerate() {
