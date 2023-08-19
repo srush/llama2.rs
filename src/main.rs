@@ -51,6 +51,21 @@ mod constants {
     pub const VOCAB_SIZE: usize = 32000;
 }
 
+#[cfg(group_size = "128")]
+mod group {
+    pub const GROUPSIZE: usize = 128;
+}
+
+#[cfg(group_size = "64")]
+mod group {
+    pub const GROUPSIZE: usize = 64;
+}
+
+#[cfg(group_size = "32")]
+mod group {
+    pub const GROUPSIZE: usize = 32;
+}
+
 /// A dense linear layer.
 /// Rust Notes:
 /// 1) We use IN and OUT as generic constrants for safety
@@ -106,6 +121,7 @@ const KV_DIM: usize = DIM / ATTN_GROUPS;
 const N_KV_HEADS: usize = N_HEADS / ATTN_GROUPS;
 const HEAD_SIZE: usize = DIM / N_HEADS;
 use constants::{ATTN_GROUPS, DIM, HIDDEN_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE};
+use group::GROUPSIZE;
 
 #[cfg(quant = "no")]
 mod model {
@@ -143,7 +159,7 @@ mod model {
 }
 
 // Quant 4 bits
-#[cfg(quant = "Q_4_128")]
+#[cfg(quant = "Q_4")]
 mod model {
     /// Code for quantized SIMD implementation.
     use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
@@ -153,9 +169,9 @@ mod model {
         x / y + if x % y == 0 { 0 } else { 1 }
     }
 
-    use super::{DIM, HIDDEN_DIM, KV_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE};
+    use super::{DIM, HIDDEN_DIM, KV_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE, GROUPSIZE};
     const BITS: usize = 4;
-    const GROUPSIZE: usize = 128;
+
 
     #[repr(C)]
     pub struct QLinear<
@@ -168,6 +184,7 @@ mod model {
         qweight: [[i32; ING]; OUT],
         qzeros: [[i32; GROUPS]; OUTG],
         scales: [[f32; GROUPS]; OUT],
+        g_index: [i32; IN]
     }
     
     impl<
@@ -192,12 +209,19 @@ mod model {
             }
             let z = f32x8::splat(0.0);
             // This should be IN / 8 but rust can't handle this statically.
+            let mut x_temp1 = [[0.0; IN]; B];
+            for i in 0 .. B {
+                for j in 0 .. IN {
+                    x_temp1[i][j] = x[i][self.g_index[j] as usize];
+                }
+            }
+
             let mut x_temp = [[z; B]; IN];
             for i in 0 .. IN / 8 {
                 for j in 0 .. B {
                     //for k in 0 .. 8 {
 //                        x_temp[i * B + j][k] = x[j][i * 8 + k];
-                        x_temp[i][j] = f32x8::from_slice(&x[j][i * 8..][..8]);
+                        x_temp[i][j] = f32x8::from_slice(&x_temp1[j][i * 8..][..8]);
                     //}
                 }
             }
@@ -507,18 +531,18 @@ fn accum(a: &mut [f32], b: &[f32]) {
     }
 }
 
-fn rmsnorm(o: &mut [f32], xo: Option<&[f32]>, weight: &[f32]) {
+fn rmsnorm(o: &mut [f32; DIM], xo: &[f32; DIM], weight: &[f32; DIM]) {
     // calculate sum of squares
-    let mut ss = xo.unwrap_or(o).iter().fold(0.0, |acc, x| acc + x * x);
+    let mut ss = xo.iter().fold(0.0, |acc, x| acc + x * x);
     
     // take mean
     ss /= DIM as f32;
-    ss += 1e-6;
+    ss += 1e-5;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
     for (j, weight_j) in weight.iter().enumerate() {
         // Solve some borrow nonsense.
-        o[j] = weight_j * ss * (xo.unwrap_or(o)[j])
+        o[j] = weight_j * ss * xo[j];
     }
 }
 
@@ -554,30 +578,31 @@ fn silu(s: &mut [f32], s2: &[f32]) {
     }
 }
 
-fn rope(queries: &mut [f32], keys: &mut [f32], freq_cis_real: &[f32], freq_cis_imag: &[f32]) {
+fn rope(queries: &mut [f32], keys: &mut [f32], pos: usize) {
     for h in 0..N_HEADS {
         // get the q and k vectors for this head
         let q = &mut queries[h * HEAD_SIZE..];
 
         // rotate q and k by the freq_cis_real and freq_cis_imag
-        for i in (0..HEAD_SIZE).step_by(2) {
+        for i in (0..HEAD_SIZE).step_by(2) { 
+            let freq = 1.0 / f32::powf(100000.0, (i as f32)/ (HEAD_SIZE as f32));
+            let val = pos as f32 * freq; 
+            let fcr = f32::cos(val);
+            let fci = f32::sin(val);
             let q0 = q[i];
-            let q1 = q[i + 1];
-            let fcr = freq_cis_real[i / 2];
-            let fci = freq_cis_imag[i / 2];
-            q[i + 0] = q0 * fcr - q1 * fci;
+            let q1 = q[i+1];
+            q[i] = q0 * fcr - q1 * fci;
             q[i + 1] = q0 * fci + q1 * fcr;
             if h < N_KV_HEADS {
                 let k = &mut keys[h * HEAD_SIZE..];
                 let k0 = k[i];
-                let k1 = k[i + 1];
-                k[i + 0] = k0 * fcr - k1 * fci;
-                k[i + 1] = k0 * fci + k1 * fcr;
+                let k1 = k[i+1];
+                k[i] = k0 * fcr - k1 * fci;
+                k[i + 1] = k0 * fci + k1 * fcr;    
             }
         }
     }
     // Apply RoPE rotation to the q and k vectors for each head
-
 }
 
 fn multihead_attention(
@@ -608,6 +633,7 @@ fn multihead_attention(
                 let k = &key_cache[t][h / ATTN_GROUPS];
                 // calculate the attention score as the dot product of q and k
                 *att_t = dot(q, k) / (HEAD_SIZE as f32).sqrt();
+                
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
@@ -644,10 +670,10 @@ fn transformer<const B:usize>(
     }
 
     // pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    let freq_cis_real_row: Vec<[f32; DIM / N_HEADS / 2]> =
-        pos.iter().map(|i| w.freq_cis_real[*i]).collect();
-    let freq_cis_imag_row: Vec<[f32; DIM / N_HEADS / 2]> =
-        pos.iter().map(|i| w.freq_cis_imag[*i]).collect();
+    // let freq_cis_real_row: Vec<[f32; DIM / N_HEADS / 2]> =
+    //     pos.iter().map(|i| w.freq_cis_real[*i]).collect();
+    // let freq_cis_imag_row: Vec<[f32; DIM / N_HEADS / 2]> =
+    //     pos.iter().map(|i| w.freq_cis_imag[*i]).collect();
 
     // FFN
     let mut xb2 = [[0.0; DIM]; B];
@@ -664,10 +690,17 @@ fn transformer<const B:usize>(
         // qkv matvecs for this position
 
         {
+            // if l == 0 {
+            //     println!("emb {:?}", x[0]);
+            // }
             // attention rmsnorm
             for (xb, x) in xb.iter_mut().zip(x.iter()) {
-                rmsnorm(xb, Some(x), &w.rms_att_weight[l]);
+                rmsnorm(xb, x, &w.rms_att_weight[l]);
             }
+            // if l == 0 {
+            //     println!("norm {:?}", xb[0]);
+            // }
+
             w.wq[l].matvec(&mut q, &xb) ;
             w.wk[l].matvec(&mut k, &xb);
             w.wv[l].matvec(&mut v, &xb);
@@ -677,11 +710,14 @@ fn transformer<const B:usize>(
                 rope(
                     &mut q[i],
                     &mut k[i],
-                    &freq_cis_real_row[i],
-                    &freq_cis_imag_row[i],
+                    pos[i],
                 );
             }
             // save key,value at this time step (pos) to our kv cache
+            // if l == 31 {
+            //     println!("key 31 {:?}", s.key_cache[l][0][0]);
+            // }
+
             for (i, pos) in pos.into_iter().enumerate() {
                 for (row, k) in s.key_cache[l][*pos]
                     .iter_mut()
@@ -715,7 +751,7 @@ fn transformer<const B:usize>(
             for i in 0..B {
                 accum(&mut x[i], &xb2[i]);
                 // ffn rmsnorm
-                rmsnorm(&mut xb[i], Some(&x[i]), &w.rms_ffn_weight[l]);
+                rmsnorm(&mut xb[i], &x[i], &w.rms_ffn_weight[l]);
             }
 
             // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -736,18 +772,17 @@ fn transformer<const B:usize>(
         for (x, xb) in x.iter_mut().zip(xb.iter()) {
             accum(x, xb);
         }
-
-
     }
-
+    let mut fin = [[0.0; DIM]; B];
     if B == 1 {
         // final rmsnorm
-        for x in x.iter_mut() {
-            rmsnorm(x, None, &w.rms_final_weight);
+        for (x, fin) in x.iter().zip(fin.iter_mut()) {
+            rmsnorm(fin, x, &w.rms_final_weight);
         }
 
         // classifier into logits
-        w.wcls.matvec(logits, &x[..1].try_into().expect("size"));
+        w.wcls.matvec(logits, &fin[..1].try_into().expect("size"));
+        //println!("logits {:?}", logits);
     }
 }
 
@@ -903,6 +938,7 @@ fn main() {
     prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     prefill::<1>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     token = prompt_tokens[pos-1];
+    let mut outputs = Vec::new();
     while pos < steps {
         // forward the transformer to get logits for the next token
         let tokens = [token];
@@ -944,6 +980,11 @@ fn main() {
 
         // advance forward
         token = next;
+        outputs.push(token);
+        let l = outputs.len(); 
+        if l > 6 && outputs[l-1] == 13 && outputs[l-2] == 13 && outputs[l-3] == 13 && outputs[l-4] == 13 {
+            break;
+        }
         pos += 1;
         // init our timer here because the first iteration is slow due to memmap
         // if start == 0 {
@@ -955,6 +996,6 @@ fn main() {
     let end = time_in_ms();
     println!(
         "\nachieved tok/s: {}",
-        (steps - 1) as f32 / (end - start) as f32 * 1000.0
+        (pos) as f32 / (end - start) as f32 * 1000.0
     );
 }
