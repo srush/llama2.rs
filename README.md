@@ -46,7 +46,7 @@ To run:
 
 ```
 > cargo build --release
-> target/release/llama2_rs -c llama2-70b-q.bin -t 0.0 -s 11 "The only thing"                                                                                                                                 
+> target/release/llama2_rs -c llama2-70b-q.bin -t 0.0 -s 11 -p "The only thing"                                                                                                                                 
 The only thing that I can think of is that the          
 achieved tok/s: 0.89155835
 ```
