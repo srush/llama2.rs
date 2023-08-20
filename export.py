@@ -31,9 +31,9 @@ def export(model2, filepath='model.bin'):
     p['n_layers'] = len(model.layers)
     print(model2.model)
     def serialize(k):
-        # w = None
-        # if isinstance(k, torch.Tensor):
-        #     w = k       
+        w = None
+        if isinstance(k, torch.Tensor):
+            w = k       
         # elif "GeneralQuantLinear" in str(k.__class__) and EXPAND:
         #     w = k.build()[0].T
         
