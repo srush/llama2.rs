@@ -13,7 +13,7 @@ It has the following features:
 * Static size checks throughout
 * Support for Grouped Query Attention (needed for big Llamas)
 
-Can run up on *1 tok/s* 70B Llama2. (intel i9 with avx512) 
+Can run up on *1 tok/s* 70B Llama2 and *9 tok/s* 7B Llama2. (intel i9 with avx512) 
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
@@ -55,20 +55,17 @@ Honestly, not so bad for running on my GPU machine, significantly faster than ll
 Here's a run of 13B quantized:
 
 ```bash
-target/release/llama2_rs -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to 
-all the cool people out there who "
-
-<s>
- Hello to all the cool people out there who are reading this. I hope you are having a great day. I am here
+target/release/llama2_rs -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+> Hello to all the cool people out there who are reading this. I hope you are having a great day. I am here
 achieved tok/s: 5.1588936
 ```
 
 Here's a run of 7B quantized:
 
 ```bash
-> target/release/llama2_rs llama2_7b.bin 0.0 11 "The only thing"
-The only thing that is certain in life is change.
-achieved tok/s: 7.9735823
+target/release/llama2_rs -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+> Hello to all the cool people out there who are reading this. I am a newbie here and I am looking for some
+achieved tok/s: 9.048136
 ```
 
 ### Configuration
