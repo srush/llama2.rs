@@ -121,37 +121,12 @@ def export(model2, filepath='model.bin'):
     f.close()
     print(f"wrote {filepath}")
 
-
-model_name_or_path = "TheBloke/Platypus2-70B-Instruct-GPTQ"
-model_basename = "gptq-4bit-32g-actorder_True"
-
-
-def load_and_export(model_path, output_path):
-    tokenizer = AutoTokenizer.from_pretrained("TheBloke/orca_mini_v3_13B-GPTQ")
-    prompt = "### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n### User:\nTell me about Orcas.\n\n### Assistant:\n"
-    x = tokenizer.backend_tokenizer.normalizer.normalize_str(prompt)
-    #rev = {v: k for k, v in tokenizer.get_vocab().items()}
-    #for i in range(32000):
-    #    print(i, rev[i])
-    #print(dir(tokenizer.backend_tokenizer.normalizer))
-    #prompt = "1000"
-
-
-    #for a, b in zip(prompt, x[1:]):
-    #    print(a, b)
-    #    print(a == b)
-    
-    #inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
-    #print(inputs)
-    #exit()
-    # model_name_or_path = "TheBloke/Llama-2-70B-chat-GPTQ"
-    # model_basename = "main"
-
+def load_and_export(model_name, revision, output_path):
     use_triton = False
-    model = AutoGPTQForCausalLM.from_quantized(model_name_or_path,
+    model = AutoGPTQForCausalLM.from_quantized(model_name,
             #model_basename=model_basename,
             use_safetensors=True,
-            revision=model_basename,
+            revision=revision,
             inject_fused_attention = False,
             inject_fused_mlp = False,
             trust_remote_code=True,
@@ -159,32 +134,14 @@ def load_and_export(model_path, output_path):
             use_triton=use_triton,                                   
             quantize_config=None,
     )
-    # tokens = tokenizer("the guy", return_tensors="pt").to(model.device)
-    # print(tokens)
-    # print(model)
-    # print(model.lm_head)
-    # print(model.lm_head.weight.shape)
-    # with torch.no_grad():
-    #     #out = model.forward(**tokens)
-    #     model.float()
-    #     model.model.model.embed_tokens.float()
-    #     model.model.model.layers[0].input_layernorm.float()
-    #     emb = model.model.model.embed_tokens(tokens["input_ids"])
-    #     print(emb[0])
-    #     print(model.model.model.layers[0].input_layernorm(emb)[0])
-    #     #print(model.model.model.embed_tokens(out))
-    #     #print(out.keys())
-    #     out = model.forward(**tokens)
-    #     print(out["past_key_values"][0][0][0, 0, 0])
-    #     print(out["past_key_values"][31][0][0, 0, 0])
-        
-    #     print("logits", out["logits"][0][2])
     export(model, output_path)
 
 if __name__ == '__main__':
-    if len(sys.argv) == 1:
+    if len(sys.argv) != 4:
         print('[output path]')
         exit()
 
     output_path = sys.argv[1]
-    load_and_export("", output_path)
+    model_name = sys.argv[2]
+    revision = sys.argv[3]
+    load_and_export(model_name, revision, output_path) 
