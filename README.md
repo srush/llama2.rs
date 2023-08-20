@@ -1,12 +1,17 @@
 # llama2.rs
 
-This is a one-file Rust implementation of Llama2. 
+This is a Rust implementation of Llama2 inference on CPU.
+
+The goal is to be as fast as possible. 
+
+It has the following features:
 
 * Support for 4-bit GPT-Q Quantization
+* Batched prefill of prompt tokens
 * SIMD support for fast CPU inference
-* Support for Grouped Query Attention (needed for big Llamas)
 * Memory mapping, loads 70B instantly.
-* Static size checks, no pointers
+* Static size checks throughout
+* Support for Grouped Query Attention (needed for big Llamas)
 
 Can run up on *1 tok/s* 70B Llama2. (intel i9 with avx512) 
 
