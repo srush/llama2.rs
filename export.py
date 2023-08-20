@@ -57,7 +57,6 @@ def export(model2, filepath='model.bin'):
 
                 return final
             for w in [rearrange(k).type(torch.int32), k.qzeros.type(torch.int32), k.scales.type(torch.float32), k.g_idx.argsort(stable=True).type(torch.int32)]:
-                print("Quant")
                 print(w.shape)
                 t = w.T.contiguous().view(-1).detach().cpu().numpy()
                 f.write(memoryview(t))
@@ -139,7 +138,8 @@ def load_and_export(model_name, revision, output_path):
 
 if __name__ == '__main__':
     if len(sys.argv) != 4:
-        print('[output path]')
+        print('Failure need args in this form.')
+        print('[output path] [path] [revision]')
         exit()
 
     output_path = sys.argv[1]
