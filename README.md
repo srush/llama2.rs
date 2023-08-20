@@ -12,14 +12,14 @@ Can run up on *1 tok/s* 70B Llama2. (intel i9 with avx512)
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
-To build (requires +nightly to use SIMD, get with rustup):
+To build, you'll need the nightly toolchain, which is used by default:
 
 ```
 > rustup toolchain install nightly # to get nightly
-> cargo +nightly build --release
+> cargo build --release
 ```
 
-If you get an error you may need to change .cargo/config to match your chipset. Looks for AVX512 by default.
+If you get a build error you may need to change .cargo/config to match your chipset.
 
 To get model (loads [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)):
 
@@ -56,7 +56,7 @@ achieved tok/s: 7.9735823
 
 ### Configuration
 
-In order to make the model as fast as possible, you need to compile a new version to adapt to other Llama versions. Currently this is done by a group of constant headers at the top of the file. The model will fail if these disagree with the binary model that is being loaded. 
+In order to make the model as fast as possible, you need to compile a new version to adapt to other Llama versions. Currently in `.cargo/config`. The model will fail if these disagree with the binary model that is being loaded. 
 
 ```rust
 // Configuration for Llama 70B. Others in config.txt                                                                                          
@@ -96,8 +96,7 @@ Started as a port of the original code, with extra type information to make it e
 There are two dependencies: 
 * `memmap2`for memory mapping
 * `rayon` for parallel computation.
-* SIMD enabled support with +nightly.
-
+* SIMD enabled support with `portable_simd`
 
 ### Why? 
 

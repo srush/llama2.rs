@@ -31,11 +31,11 @@ def export(model2, filepath='model.bin'):
     p['n_layers'] = len(model.layers)
     print(model2.model)
     def serialize(k):
-        w = None
-        if isinstance(k, torch.Tensor):
-            w = k
-        elif "GeneralQuantLinear" in str(k.__class__) and EXPAND:
-            w = k.build()[0].T
+        # w = None
+        # if isinstance(k, torch.Tensor):
+        #     w = k       
+        # elif "GeneralQuantLinear" in str(k.__class__) and EXPAND:
+        #     w = k.build()[0].T
         
         elif "GeneralQuantLinear" not in str(k.__class__):
             w = k.weight
@@ -62,6 +62,10 @@ def export(model2, filepath='model.bin'):
                 t = w.T.contiguous().view(-1).detach().cpu().numpy()
                 f.write(memoryview(t))
         else:
+            if hasattr(k, "weight"):
+                w = k.weight
+            else:
+                w = k
             print("Regular")
             print(w.shape)
             t = w.contiguous().view(-1).detach().cpu().type(torch.float32).numpy()
@@ -74,9 +78,6 @@ def export(model2, filepath='model.bin'):
     p['n_heads'] = model.layers[0].self_attn.num_heads
     hidden_dim = model.layers[0].mlp.up_proj.qweight.shape[1]
     
-    #hidden_dim = 11008
-    #model.layers[0].mlp.up_proj.build()[0].shape[0]
-
     p['vocab_size'] = 32000
     p['max_seq_len'] = 2048
 
