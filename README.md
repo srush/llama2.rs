@@ -19,7 +19,7 @@ Can run up on *1 tok/s* 70B Llama2. (intel i9 with avx512)
 
 To build, you'll need the nightly toolchain, which is used by default:
 
-```
+```bash
 > rustup toolchain install nightly # to get nightly
 > ulimit -s 10000000 # Increase your stack memory limit. 
 ```
@@ -54,8 +54,8 @@ Honestly, not so bad for running on my GPU machine, significantly faster than ll
 
 Here's a run of 13B quantized:
 
-```
-@:~/Projects/llama2.rs$ target/release/llama2_rs -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to 
+```bash
+target/release/llama2_rs -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to 
 all the cool people out there who "
 
 <s>
@@ -65,7 +65,7 @@ achieved tok/s: 5.1588936
 
 Here's a run of 7B quantized:
 
-```
+```bash
 > target/release/llama2_rs llama2_7b.bin 0.0 11 "The only thing"
 The only thing that is certain in life is change.
 achieved tok/s: 7.9735823
