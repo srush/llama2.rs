@@ -2,7 +2,7 @@
 
 This is a Rust implementation of Llama2 inference on CPU.
 
-The goal is to be as fast as possible. 
+The goal is to be as fast as possible. 🤗
 
 It has the following features:
 
