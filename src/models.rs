@@ -47,44 +47,44 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
     }
 }
 
+/// This is the main standard Transformer model
+/// This is generally slower, but included for sanity and debugging.
+#[repr(C)]
+#[allow(dead_code)]
+pub struct TransformerWeights {
+
+    // token embedding table
+    pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE],
+
+    // weights for rmsnorms
+    pub rms_att_weight: [[f32; DIM]; N_LAYERS],
+
+    // weights for matmuls
+    pub wq: [Linear<DIM, DIM>; N_LAYERS],
+    pub wk: [Linear<DIM, KV_DIM>; N_LAYERS],
+    pub wv: [Linear<DIM, KV_DIM>; N_LAYERS],
+    pub wo: [Linear<DIM, DIM>; N_LAYERS],
+
+    pub rms_ffn_weight: [[f32; DIM]; N_LAYERS],
+    // weights for ffn
+    pub w1: [Linear<DIM, HIDDEN_DIM>; N_LAYERS],
+    pub w2: [Linear<HIDDEN_DIM, DIM>; N_LAYERS],
+    pub w3: [Linear<DIM, HIDDEN_DIM>; N_LAYERS],
+    // final rmsnorm
+    pub rms_final_weight: [f32; DIM], // (dim,)
+
+    // Deprecated. freq_cis for RoPE relatively positional embeddings
+    pub _freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
+    pub _freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
+
+    // Classifier weights for the logits, on the last layer
+    pub wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
+}
+
 #[cfg(quant = "no")]
 mod model {
-    //! This is the main standard Transformer model
-    //! This is generally slower, but included for sanity and debugging.
-    use super::{DIM, GROUPSIZE, HIDDEN_DIM, KV_DIM, N_HEADS, N_LAYERS, SEQ_LEN, VOCAB_SIZE};
-    #[repr(C)]
-    #[allow(dead_code)]
-    struct TransformerWeights {
-        // token embedding table
-        pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE],
-
-        // weights for rmsnorms
-        pub rms_att_weight: [[f32; DIM]; N_LAYERS],
-
-        // weights for matmuls
-        pub wq: [Linear<DIM, DIM>; N_LAYERS],
-        pub wk: [Linear<DIM, KV_DIM>; N_LAYERS],
-        pub wv: [Linear<DIM, KV_DIM>; N_LAYERS],
-        pub wo: [Linear<DIM, DIM>; N_LAYERS],
-
-        pub rms_ffn_weight: [[f32; DIM]; N_LAYERS],
-        // weights for ffn
-        pub w1: [Linear<DIM, HIDDEN_DIM>; N_LAYERS],
-        pub w2: [Linear<HIDDEN_DIM, DIM>; N_LAYERS],
-        pub w3: [Linear<DIM, HIDDEN_DIM>; N_LAYERS],
-        // final rmsnorm
-        pub rms_final_weight: [f32; DIM], // (dim,)
-
-        // Deprecated. freq_cis for RoPE relatively positional embeddings
-        pub _freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
-        pub _freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
-
-        // Classifier weights for the logits, on the last layer
-        pub wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
-    }
-
     // Turn off GPT-Q Quantization.
-    pub type TWeights = TransformerWeights;
+    pub type TWeights = super::TransformerWeights;
 }
 
 #[cfg(quant = "Q_4")]
