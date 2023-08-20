@@ -29,7 +29,8 @@ If you get a build error you may need to change `.cargo/config` to match your ch
 You can load models from the Hugging Face hub. For example this creates a version of a [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)) model with 4 bit quant and 64 sized groups:
 
 ```
-> pip install torch transformers auto-gptq
+> pip install torch
+> pip install transformers auto-gptq
 > python export.py l70b.act64.bin TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ gptq-4bit-64g-actorder_True
 ```
 
