@@ -218,7 +218,7 @@ fn rope(queries: &mut [f32], keys: &mut [f32], pos: usize) {
 
         // rotate q and k by the freq_cis_real and freq_cis_imag
         for i in (0..HEAD_SIZE).step_by(2) {
-            let freq = 1.0 / f32::powf(100000.0, (i as f32) / (HEAD_SIZE as f32));
+            let freq = 1.0 / f32::powf(10000.0, (i as f32) / (HEAD_SIZE as f32));
             let val = pos as f32 * freq;
             let fcr = f32::cos(val);
             let fci = f32::sin(val);
