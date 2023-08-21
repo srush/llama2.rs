@@ -135,7 +135,8 @@ fn main() {
     prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
     prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<1>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<2>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
 
     let mut token: Token = if pos == 0 {
         START

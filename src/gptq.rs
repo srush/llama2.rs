@@ -80,16 +80,16 @@ impl<
 
             // Iterate over weight groups (32/64/128).
             for (((scale, qweight), x_temp), qzs) in self.scales[oi]
-                .into_iter()
+                .iter()
                 .zip(qweight)
                 .zip(x_temp.chunks_exact(GROUPSIZE / 8))
                 .zip(qzeros)
             {
                 let qz = ((qzs >> (BITS * out_elem)) & mask) + 1;
-                let scale_simd = f32x8::splat(scale);
+                let scale_simd = f32x8::splat(*scale);
                 let zero_simd = i32x8::splat(qz);
                 // Iterate over chunks of 8 weights. 
-                for (&v, x) in qweight.into_iter().zip(x_temp) {
+                for (&v, x) in qweight.iter().zip(x_temp) {
                     //Extract v into 8 chunks
                     let num_simd = i32x8::splat(v);
                     let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
