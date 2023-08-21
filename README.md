@@ -13,7 +13,7 @@ It has the following features:
 * Static size checks throughout
 * Support for Grouped Query Attention (needed for big Llamas)
 
-Can run up on *1 tok/s* 70B Llama2 and *9 tok/s* 7B Llama2. (intel i9 with avx512) 
+Can run up on *1 tok/s* 70B Llama2 and *9 tok/s* 7B Llama2. (on my intel i9 desktop) 
 
 <img src="https://github.com/srush/llama2.rs/assets/35882/dac9a285-b141-409f-bb46-c81a28516cd1" width=300px>
 
@@ -46,7 +46,7 @@ To run:
 
 ```
 > cargo build --release
-> target/release/llama2_rs -c llama2-70b-q.bin -t 0.0 -s 11 "The only thing"                                                                                                                                 
+> target/release/llama2_rs -c llama2-70b-q.bin -t 0.0 -s 11 -p "The only thing"                                                                                                                                 
 The only thing that I can think of is that the          
 achieved tok/s: 0.89155835
 ```
