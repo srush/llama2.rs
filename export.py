@@ -27,6 +27,7 @@ def export(model2, filepath='model.bin'):
 
     EXPAND = False
     model = model2.model.model
+    
     p['dim'] = model.layers[0].mlp.up_proj.g_idx.shape[0]
     p['n_layers'] = len(model.layers)
     print(model2.model)
@@ -92,6 +93,7 @@ def export(model2, filepath='model.bin'):
 
     # next write out the embedding weights
     print("writing tok_embeddings...")
+    f.write(memoryview(torch.tensor([model2.config.rms_norm_eps]).numpy()))
     serialize(model.embed_tokens)
 
     # now all the layers
