@@ -168,13 +168,13 @@ fn accum(a: &mut [f32], b: &[f32]) {
     }
 }
 
-fn rmsnorm(o: &mut [f32; DIM], xo: &[f32; DIM], weight: &[f32; DIM]) {
+fn rmsnorm(o: &mut [f32; DIM], xo: &[f32; DIM], weight: &[f32; DIM], epsilon: f32) {
     // calculate sum of squares
     let mut ss = xo.iter().fold(0.0, |acc, x| acc + x * x);
 
     // take mean
     ss /= DIM as f32;
-    ss += 1e-6;
+    ss += epsilon;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
     for (j, weight_j) in weight.iter().enumerate() {
@@ -334,7 +334,7 @@ pub fn transformer<const B: usize>(
             // }
             // attention rmsnorm
             for (xb, x) in xb.iter_mut().zip(x.iter()) {
-                rmsnorm(xb, x, &w.rms_att_weight[l]);
+                rmsnorm(xb, x, &w.rms_att_weight[l], w.rms_eps);
             }
             // if l == 0 {
             //     println!("norm {:?}", xb[0]);
@@ -382,7 +382,7 @@ pub fn transformer<const B: usize>(
             for i in 0..B {
                 accum(&mut x[i], &xb2[i]);
                 // ffn rmsnorm
-                rmsnorm(&mut xb[i], &x[i], &w.rms_ffn_weight[l]);
+                rmsnorm(&mut xb[i], &x[i], &w.rms_ffn_weight[l], w.rms_eps);
             }
 
             // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -407,7 +407,7 @@ pub fn transformer<const B: usize>(
     if B == 1 {
         // final rmsnorm
         for (x, fin) in x.iter().zip(fin.iter_mut()) {
-            rmsnorm(fin, x, &w.rms_final_weight);
+            rmsnorm(fin, x, &w.rms_final_weight, w.rms_eps);
         }
 
         // classifier into logits
