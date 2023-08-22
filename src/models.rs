@@ -52,7 +52,6 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
 #[repr(C)]
 #[allow(dead_code)]
 pub struct TransformerWeights {
-
     pub rms_eps: f32,
 
     // token embedding table
@@ -124,7 +123,7 @@ mod model {
     #[repr(C)]
     pub struct QTransformerWeights {
         pub rms_eps: f32,
-        
+
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
         // weights for rmsnorms
@@ -245,7 +244,6 @@ fn rope(queries: &mut [f32; DIM], keys: &mut [f32; KV_DIM], pos: usize) {
     }
     // Apply RoPE rotation to the q and k vectors for each head
 }
-
 
 fn multihead_attention(
     out: &mut [[f32; DIM]],
