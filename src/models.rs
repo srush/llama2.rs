@@ -53,6 +53,8 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
 #[allow(dead_code)]
 pub struct TransformerWeights {
 
+    pub rms_eps: f32,
+
     // token embedding table
     pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE],
 
@@ -121,6 +123,8 @@ mod model {
 
     #[repr(C)]
     pub struct QTransformerWeights {
+        pub rms_eps: f32,
+        
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
         // weights for rmsnorms
@@ -170,7 +174,7 @@ fn rmsnorm(o: &mut [f32; DIM], xo: &[f32; DIM], weight: &[f32; DIM]) {
 
     // take mean
     ss /= DIM as f32;
-    ss += 1e-5;
+    ss += 1e-6;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
     for (j, weight_j) in weight.iter().enumerate() {
@@ -211,32 +215,37 @@ fn silu(s: &mut [f32], s2: &[f32]) {
     }
 }
 
-fn rope(queries: &mut [f32], keys: &mut [f32], pos: usize) {
+fn rope(queries: &mut [f32; DIM], keys: &mut [f32; KV_DIM], pos: usize) {
     for h in 0..N_HEADS {
         // get the q and k vectors for this head
-        let q = &mut queries[h * HEAD_SIZE..];
+        let q = &mut queries[h * HEAD_SIZE..][..HEAD_SIZE];
 
         // rotate q and k by the freq_cis_real and freq_cis_imag
-        for i in (0..HEAD_SIZE).step_by(2) {
-            let freq = 1.0 / f32::powf(100000.0, (i as f32) / (HEAD_SIZE as f32));
-            let val = pos as f32 * freq;
+        for i in 0..HEAD_SIZE {
+            let freq = 1.0 / f32::powf(10000.0, ((2 * i % HEAD_SIZE) as f32) / (HEAD_SIZE as f32));
+            let val = (pos as f32) * freq;
             let fcr = f32::cos(val);
             let fci = f32::sin(val);
-            let q0 = q[i];
-            let q1 = q[i + 1];
-            q[i] = q0 * fcr - q1 * fci;
-            q[i + 1] = q0 * fci + q1 * fcr;
+
+            if i < HEAD_SIZE / 2 {
+                q[i] = q[i] * fcr - q[(HEAD_SIZE / 2) + i] * fci;
+            } else {
+                q[i] = q[i] * fcr + q[i - (HEAD_SIZE / 2)] * fci;
+            }
+
             if h < N_KV_HEADS {
-                let k = &mut keys[h * HEAD_SIZE..];
-                let k0 = k[i];
-                let k1 = k[i + 1];
-                k[i] = k0 * fcr - k1 * fci;
-                k[i + 1] = k0 * fci + k1 * fcr;
+                let k = &mut keys[h * HEAD_SIZE..][..HEAD_SIZE];
+                if i < HEAD_SIZE / 2 {
+                    k[i] = k[i] * fcr - k[(HEAD_SIZE / 2) + i] * fci;
+                } else {
+                    k[i] = k[i] * fcr + k[i - (HEAD_SIZE / 2)] * fci;
+                }
             }
         }
     }
     // Apply RoPE rotation to the q and k vectors for each head
 }
+
 
 fn multihead_attention(
     out: &mut [[f32; DIM]],
