@@ -8,7 +8,10 @@ pub mod models;
 pub mod tokenizer;
 pub mod util;
 
+
+
 #[pymodule]
 fn llama2_rs_pylib (_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<tokenizer::Tokenizer>()?;
     Ok(())
 }
