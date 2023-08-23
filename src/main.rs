@@ -5,21 +5,15 @@
 //! Rust note: These are built into the code to allo for full optimization
 //! You can select which is used with --cfg model_size=70B.
 
-mod constants;
-mod gptq;
-mod models;
-mod tokenizer;
-mod util;
-
-use constants::*;
+use llama2_rs::constants::*;
 use memmap2::MmapOptions;
-use models::{softmax, transformer, RunState, TWeights};
+use llama2_rs::models::{softmax, transformer, RunState, TWeights};
 use std::fs::File;
 use std::io;
 use std::io::{Seek, SeekFrom, Write};
 use std::mem;
-use tokenizer::{Token, Tokenizer, RET, START};
-use util::{argmax, time_in_ms, Random};
+use llama2_rs::tokenizer::{Token, Tokenizer, RET, START};
+use llama2_rs::util::{argmax, time_in_ms, Random};
 
 fn print_token(tokenizer: &Tokenizer, token: Token, next: Token) {
     let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {

@@ -1,17 +1,12 @@
 """
 This script exports the AutoGPT-Q Llama 2 weights in llama2rs.bin format.
 """
-import os
-import sys
+import click
 import struct
-from pathlib import Path
-import json
 import torch
-from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-from transformers import AutoTokenizer
+from auto_gptq import AutoGPTQForCausalLM
 
-
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[torch.tensor, torch.tensor]:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
@@ -19,25 +14,20 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs_sin = torch.sin(freqs)  # imaginary part
     return freqs_cos, freqs_sin
 
-
 def export(model2, filepath='model.bin'):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(filepath, 'wb')
     p = {}
 
-    EXPAND = False
     model = model2.model.model
-    
+
     p['dim'] = model.layers[0].mlp.up_proj.g_idx.shape[0]
     p['n_layers'] = len(model.layers)
     print(model2.model)
     def serialize(k):
         w = None
         if isinstance(k, torch.Tensor):
-            w = k       
-        # elif "GeneralQuantLinear" in str(k.__class__) and EXPAND:
-        #     w = k.build()[0].T
-        
+            w = k
         elif "GeneralQuantLinear" not in str(k.__class__):
             w = k.weight
         offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28])
@@ -77,7 +67,7 @@ def export(model2, filepath='model.bin'):
     # first write out the header
     p['n_heads'] = model.layers[0].self_attn.num_heads
     hidden_dim = model.layers[0].mlp.up_proj.qweight.shape[1]
-    
+
     p['vocab_size'] = 32000
     p['max_seq_len'] = 2048
 
@@ -108,7 +98,7 @@ def export(model2, filepath='model.bin'):
     for i in range(p['n_layers']): serialize(model.layers[i].mlp.gate_proj)
     for i in range(p['n_layers']): serialize(model.layers[i].mlp.down_proj)
     for i in range(p['n_layers']): serialize(model.layers[i].mlp.up_proj)
-    
+
     # final rmsnorm
 
     serialize(model.norm)
@@ -123,28 +113,23 @@ def export(model2, filepath='model.bin'):
     f.close()
     print(f"wrote {filepath}")
 
-def load_and_export(model_name, revision, output_path):
-    use_triton = False
-    model = AutoGPTQForCausalLM.from_quantized(model_name,
-            #model_basename=model_basename,
-            use_safetensors=True,
-            revision=revision,
-            inject_fused_attention = False,
-            inject_fused_mlp = False,
-            trust_remote_code=True,
-            device="cpu",
-            use_triton=use_triton,                                   
-            quantize_config=None,
+@click.command()
+@click.argument("output-path")
+@click.argument("model-name")
+@click.argument("revision")
+def main(output_path: str, model_name: str, revision: str):
+    model = AutoGPTQForCausalLM.from_quantized(
+        model_name,
+        use_safetensors=True,
+        revision=revision,
+        inject_fused_attention = False,
+        inject_fused_mlp = False,
+        trust_remote_code=True,
+        device="cpu",
+        use_triton=False,
+        quantize_config=None,
     )
     export(model, output_path)
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
-        print('Failure need args in this form.')
-        print('[output path] [path] [revision]')
-        exit()
-
-    output_path = sys.argv[1]
-    model_name = sys.argv[2]
-    revision = sys.argv[3]
-    load_and_export(model_name, revision, output_path) 
+    main()
