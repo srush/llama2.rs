@@ -23,6 +23,3 @@ dependencies = [
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "llama2_rs.llama2_rs_pylib"
-
-[project.scripts]
-convert_quantized = "llama2_rs.export:main"
