@@ -1,5 +1,4 @@
 // Quant 4 bits
-use crate::constants::{BITS, GROUPSIZE};
 use rayon::prelude::*;
 /// Code for quantized SIMD implementation.
 use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};

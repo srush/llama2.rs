@@ -7,8 +7,13 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.3.23", features = ["derive"] }
+cust = "0.3.2"
 memmap2 = "0.7"
 rayon = "1.5"
+
+[[bin]]
+name = "check"
+path = "src/gptq_cuda2.rs"
 
 [profile.release]
 debug = true

@@ -30,7 +30,7 @@ def export(model2, filepath='model.bin'):
     p['dim'] = model.layers[0].mlp.up_proj.g_idx.shape[0]
     p['n_layers'] = len(model.layers)
     print(model2.model)
-    def serialize(k):
+    def serialize(k, max_size=1e8):
         w = None
         if isinstance(k, torch.Tensor):
             w = k       
@@ -67,8 +67,12 @@ def export(model2, filepath='model.bin'):
                 w = k
             print("Regular")
             print(w.shape)
-            t = w.contiguous().view(-1).detach().cpu().type(torch.float32).numpy()
-            f.write(memoryview(t))
+            t = w.contiguous().view(-1).detach().cpu().type(torch.float32)
+            if t.shape[0] > max_size:
+                t = t[:max_size].contiguous()
+            if len(t.shape) > 1 and t.shape[1] > max_size:
+                t = t[:, :max_size].contiguous()
+            f.write(memoryview(t.numpy()))
 
         # del state_dict[key]
 
@@ -92,7 +96,7 @@ def export(model2, filepath='model.bin'):
 
     # next write out the embedding weights
     print("writing tok_embeddings...")
-    serialize(model.embed_tokens)
+    serialize(model.embed_tokens, 32000)
 
     # now all the layers
     # attention weights
@@ -116,7 +120,7 @@ def export(model2, filepath='model.bin'):
     serialize(freqs_sin[:p['max_seq_len']])
 
     # finally write the output weights
-    serialize(model2.model.lm_head)
+    serialize(model2.model.lm_head, 32000)
 
     f.close()
     print(f"wrote {filepath}")

@@ -6,20 +6,22 @@
 //! You can select which is used with --cfg model_size=70B.
 
 mod constants;
-mod gptq;
+mod gptq_cuda;
 mod models;
 mod tokenizer;
 mod util;
 
+
 use constants::*;
 use memmap2::MmapOptions;
-use models::{softmax, transformer, RunState, TWeights};
+use models::{softmax, transformer, RunState, TWeights, QTransformerWeights, convert};
 use std::fs::File;
 use std::io;
 use std::io::{Seek, SeekFrom, Write};
 use std::mem;
 use tokenizer::{Token, Tokenizer, RET, START};
 use util::{argmax, time_in_ms, Random};
+use cust::prelude::*;
 
 fn print_token(tokenizer: &Tokenizer, token: Token, next: Token) {
     let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
@@ -89,13 +91,16 @@ struct Args {
     debug: bool,
 }
 
+
 fn main() {
+    let _ctx = cust::quick_init().expect("start");
+ 
     let args = Args::parse();
     // 'checkpoint' is necessary arg
     let mut random = Random::new();
 
     // Read in the model.bin file
-    let (weights, _mmap): (&'static TWeights, _) = {
+//    let (weights, _mmap) = {
         let mut file = File::open(&args.checkpoint).unwrap();
         let conf = Config::load(&mut file);
         if args.debug {
@@ -103,9 +108,15 @@ fn main() {
         }
         let start = file.seek(SeekFrom::Current(0)).unwrap();
         let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-        assert_eq!(mmap.len(), mem::size_of::<TWeights>());
-        (unsafe { &*(mmap.as_ptr() as *const TWeights) }, mmap)
-    };
+        assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
+        let res = unsafe { &*(mmap.as_ptr() as *const QTransformerWeights) };
+        println!("{:?}", res.wq[0].g_index);
+        let weights = convert(res).expect("conversion");
+        println!("{:?}", res.wq[0].g_index);
+        println!("{:?}", weights.wq[0].g_index);
+    //    (x, mmap)
+
+  //  };
 
     // Read in the tokenizer.bin file
     let tokenizer = {
@@ -131,12 +142,12 @@ fn main() {
 
     // Do a little backoff to handle different sizes.This costs us compilation time,
     // But allows us to compile versions of with the longest lnength prefill possible.
-    prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<2>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    // prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    // prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    // prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    // prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    // prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    // prefill::<2>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
 
     let mut token: Token = if pos == 0 {
         START
