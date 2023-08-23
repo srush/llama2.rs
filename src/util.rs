@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pyo3::{pyclass, pymethods};
+
 pub fn read_float(file: &mut File) -> f32 {
     let mut buf = [0u8; 4];
     file.read_exact(&mut buf).unwrap();
@@ -47,10 +49,14 @@ pub fn time_in_ms() -> i64 {
 }
 
 // Probably should just use Rust random. This came from llama2.c
+#[pyclass]
 pub struct Random {
     seed: u64,
 }
+
+#[pymethods]
 impl Random {
+    #[staticmethod]
     pub fn new() -> Random {
         // seed rng with time. if you want deterministic behavior use temperature 0.0
         Random {
@@ -61,7 +67,7 @@ impl Random {
         }
     }
 
-    fn random_u32(self: &mut Self) -> u32 {
+    fn random_u32(&mut self) -> u32 {
         // xorshift rng: https://en.wikipedia.org/wiki/Xorshift#xorshift.2A
         self.seed ^= self.seed >> 12;
         self.seed ^= self.seed << 25;
@@ -69,12 +75,15 @@ impl Random {
         (self.seed.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 32) as u32
     }
 
-    fn random(self: &mut Self) -> f32 {
+    fn random(&mut self) -> f32 {
         // random float32 in [0,1)
         (self.random_u32() >> 8) as f32 / 16777216.0
     }
+}
 
-    pub fn sample(self: &mut Self, probabilities: &[f32], n: usize) -> usize {
+// this isn't exposed to Python since we don't have a conversion to &[f32]
+impl Random {
+    pub fn sample(&mut self, probabilities: &[f32], n: usize) -> usize {
         // sample index from probabilities, they must sum to 1
         let r = self.random();
         let mut cdf = 0.0;

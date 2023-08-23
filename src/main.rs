@@ -5,7 +5,7 @@
 //! Rust note: These are built into the code to allo for full optimization
 //! You can select which is used with --cfg model_size=70B.
 
-use llama2_rs::constants::*;
+use llama2_rs::{constants::*, LoadedModel};
 use memmap2::MmapOptions;
 use llama2_rs::models::{softmax, transformer, RunState, TWeights};
 use std::fs::File;
@@ -89,23 +89,10 @@ fn main() {
     let mut random = Random::new();
 
     // Read in the model.bin file
-    let (weights, _mmap): (&'static TWeights, _) = {
-        let mut file = File::open(&args.checkpoint).unwrap();
-        let conf = Config::load(&mut file);
-        if args.debug {
-            println!("Configuration: {conf:?}");
-        }
-        let start = file.seek(SeekFrom::Current(0)).unwrap();
-        let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-        assert_eq!(mmap.len(), mem::size_of::<TWeights>());
-        (unsafe { &*(mmap.as_ptr() as *const TWeights) }, mmap)
-    };
+    let model = LoadedModel::from_file(&args.checkpoint, args.debug);
 
     // Read in the tokenizer.bin file
-    let tokenizer = {
-        let mut file = File::open("tokenizer.bin").unwrap();
-        Tokenizer::load(&mut file)
-    };
+    let tokenizer = Tokenizer::new("tokenizer.bin");
 
     // create and init the application RunState
     let mut state: Box<RunState> = RunState::new();
@@ -125,12 +112,12 @@ fn main() {
 
     // Do a little backoff to handle different sizes.This costs us compilation time,
     // But allows us to compile versions of with the longest lnength prefill possible.
-    prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
-    prefill::<2>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &weights);
+    prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
+    prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
+    prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
+    prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
+    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
+    prefill::<2>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
 
     let mut token: Token = if pos == 0 {
         START
@@ -145,7 +132,7 @@ fn main() {
         let tokens = [token];
         let positions = [pos];
 
-        transformer(&mut raw_logits, &tokens, &positions, &mut state, &weights);
+        transformer(&mut raw_logits, &tokens, &positions, &mut state, &model.weights);
         let logits = &mut raw_logits[0];
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
