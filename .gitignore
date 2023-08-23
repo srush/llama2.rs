@@ -20,3 +20,4 @@ Cargo.lock
 
 # Python extensions shouldn't be checked in
 **/*.so
+**/__pycache__/

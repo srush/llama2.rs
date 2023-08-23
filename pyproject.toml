@@ -14,7 +14,7 @@ dependencies = [
     "click",
     "torch",
     "transformers",
-    "auto_gptq",
+    "auto_gptq <= 0.3.1",
 ]
 
 # see https://github.com/PyO3/maturin/tree/main/test-crates/pyo3-mixed-py-subdir
@@ -25,4 +25,4 @@ python-source = "python"
 module-name = "llama2_rs.llama2_rs_pylib"
 
 [project.scripts]
-export = "llama2_rs.export:main"
+convert_quantized = "llama2_rs.export:main"
