@@ -10,7 +10,7 @@ from auto_gptq import AutoGPTQForCausalLM
 from auto_gptq.nn_modules import qlinear
 from transformers.models.llama import modeling_llama
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[torch.tensor, torch.tensor]:
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[torch.Tensor, torch.Tensor]:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
@@ -18,44 +18,52 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[to
     freqs_sin = torch.sin(freqs)  # imaginary part
     return freqs_cos, freqs_sin
 
-def export(model_wrapper: nn.Module, path: pathlib.Path):
+Serializable = torch.Tensor | qlinear.GeneralQuantLinear | modeling_llama.LlamaRMSNorm | nn.modules.linear.Linear | nn.Embedding
+
+def export(model_wrapper: AutoGPTQForCausalLM, path: pathlib.Path):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(path, 'wb')
 
     print(model_wrapper.model)
     model = model_wrapper.model.model
 
-    Serializable = torch.Tensor | qlinear.GeneralQuantLinear | modeling_llama.LlamaRMSNorm | nn.modules.linear.Linear
     def serialize(k: Serializable):
-        match k:
-            case torch.Tensor() | modeling_llama.LlamaRMSNorm() | nn.modules.linear.Linear():
-                if isinstance(k, torch.Tensor):
-                    w = k
-                else:
-                    w = k.weight
+        def write_buffer(w: torch.Tensor, transpose: bool = False, cast_to_float: bool = True):
+            assert isinstance(w, torch.Tensor)
+            print(w.shape)
+            if transpose:
+                w = w.T            
+            t = w.contiguous().view(-1).detach().cpu()
+            if cast_to_float:
+                t = t.type(torch.float32)
+            t = t.numpy()
+            f.write(memoryview(t))
 
-                print("regular")
-                print(w.shape)
-                t = w.contiguous().view(-1).detach().cpu().type(torch.float32).numpy()
-                f.write(memoryview(t))
-            case qlinear.GeneralQuantLinear():
-                # more complex case
-                print("quantized")
-                offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28])
-                def rearrange(k):
-                    order = k.g_idx.cpu().argsort(stable=True)
-                    extract = (k.qweight.cpu()[:, None, :] >> offset[:, None]) & (2**4-1)
-                    extract = extract.view(k.g_idx.shape[0], -1)[order]
-                    store = extract << offset.repeat(1, extract.shape[0] // 8)[..., None]
-                    store = store.view(k.qweight.shape[0], 8, k.qweight.shape[1])
-                    final = torch.zeros(*k.qweight.shape, dtype=int)
-                    for i in range(8):
-                        final = final | store[:, i]
-                    return final
-                for w in [rearrange(k).type(torch.int32), k.qzeros.type(torch.int32), k.scales.type(torch.float32), k.g_idx.argsort(stable=True).type(torch.int32)]:
-                    print(w.shape)
-                    t = w.T.contiguous().view(-1).detach().cpu().numpy()
-                    f.write(memoryview(t))
+        if type(k) is torch.Tensor:
+            write_buffer(k)
+        elif type(k) in (modeling_llama.LlamaRMSNorm, nn.Embedding, nn.modules.linear.Linear):
+            write_buffer(k.weight)
+        elif type(k) is qlinear.GeneralQuantLinear or hasattr(k, 'qweight'):
+            offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28])
+            def rearrange(k: qlinear.GeneralQuantLinear):
+                order = k.g_idx.cpu().argsort(stable=True)
+                extract = (k.qweight.cpu()[:, None, :] >> offset[:, None]) & (2**4-1)
+                extract = extract.view(k.g_idx.shape[0], -1)[order]
+                store = extract << offset.repeat(1, extract.shape[0] // 8)[..., None]
+                store = store.view(k.qweight.shape[0], 8, k.qweight.shape[1])
+                final = torch.zeros(*k.qweight.shape, dtype=int)
+                for i in range(8):
+                    final = final | store[:, i]
+                return final
+            for w in [
+                rearrange(k).type(torch.int32),
+                k.qzeros.type(torch.int32),
+                k.scales.type(torch.float32),
+                k.g_idx.argsort(stable=True).type(torch.int32)
+            ]:
+                write_buffer(w, transpose=len(w.size()) == 2, cast_to_float=False)
+        else:
+            raise ValueError(f"Unable to export this type of weight: {k}")
 
     # first write out the header
     p = {}
@@ -117,12 +125,11 @@ def main(output_path: pathlib.Path, model_name: str, revision: str):
     model = AutoGPTQForCausalLM.from_quantized(
         model_name,
         revision=revision,
-        model_basename="model",
         use_safetensors=True,
-        trust_remote_code=False,
+        trust_remote_code=True,
         device="cpu",
-        inject_fused_attention = False,
-        inject_fused_mlp = False,
+        inject_fused_attention=False,
+        inject_fused_mlp=False,
         use_triton=False,
         quantize_config=None,
     )
