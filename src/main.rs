@@ -5,56 +5,10 @@
 //! Rust note: These are built into the code to allo for full optimization
 //! You can select which is used with --cfg model_size=70B.
 
-use llama2_rs::{constants::*, LoadedModel};
-use memmap2::MmapOptions;
-use llama2_rs::models::{softmax, transformer, RunState, TWeights};
-use std::fs::File;
-use std::io;
-use std::io::{Seek, SeekFrom, Write};
-use std::mem;
-use llama2_rs::tokenizer::{Token, Tokenizer, RET, START};
-use llama2_rs::util::{argmax, time_in_ms, Random};
-
-fn print_token(tokenizer: &Tokenizer, token: Token, next: Token) {
-    let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
-        &tokenizer.vocab[next][1..]
-    } else {
-        &tokenizer.vocab[next]
-    };
-    print!("{}", token_str);
-    io::stdout().flush().expect("flush failed");
-}
-
-/// For the prompt, fills the caches by running transformer.
-/// While not strictly necessary, this can lead to faster
-/// Performance by batching computation. Should lead to
-/// Identical results.
-fn prefill<const A: usize>(
-    pos: &mut usize,
-    state: &mut RunState,
-    prompt_tokens: &Vec<usize>,
-    tokenizer: &Tokenizer,
-    weights: &TWeights,
-) {
-    while *pos + A < prompt_tokens.len() {
-        let mut tokens = [0; A];
-        let mut positions = [0; A];
-        let mut fake_logits = [[0.0; VOCAB_SIZE]; 1];
-        for i in 0..A {
-            let next = if *pos == 0 {
-                START
-            } else {
-                prompt_tokens[*pos - 1]
-            };
-            positions[i] = *pos;
-            tokens[i] = next;
-            *pos += 1;
-            let token = next;
-            print_token(tokenizer, token, next)
-        }
-        transformer(&mut fake_logits, &tokens, &positions, state, &weights);
-    }
-}
+use llama2_rs::inference::generate;
+use llama2_rs::LlamaModel;
+use llama2_rs::tokenizer::Tokenizer;
+use llama2_rs::util::Random;
 
 use clap::Parser;
 
@@ -89,97 +43,24 @@ fn main() {
     let mut random = Random::new();
 
     // Read in the model.bin file
-    let model = LoadedModel::from_file(&args.checkpoint, args.debug);
+    let model = LlamaModel::from_file(&args.checkpoint, args.debug);
 
     // Read in the tokenizer.bin file
     let tokenizer = Tokenizer::new("tokenizer.bin");
 
-    // create and init the application RunState
-    let mut state: Box<RunState> = RunState::new();
-
-    // process the prompt, if any
-    let prompt_tokens = if !args.prompt.is_empty() {
-        let prompt = format!(" {}", args.prompt.trim());
-        tokenizer.bpe_encode(&prompt)
-    } else {
-        Vec::new()
-    };
-
-    // start the main loop
-    let start = time_in_ms(); // used to time our code, only initialized after first iteration
-    let mut next; // will store the next token in the sequence
-    let mut pos = 0; // position in the sequence
-
-    // Do a little backoff to handle different sizes.This costs us compilation time,
-    // But allows us to compile versions of with the longest lnength prefill possible.
-    prefill::<64>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
-    prefill::<32>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
-    prefill::<16>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
-    prefill::<8>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
-    prefill::<4>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
-    prefill::<2>(&mut pos, &mut state, &prompt_tokens, &tokenizer, &model.weights);
-
-    let mut token: Token = if pos == 0 {
-        START
-    } else {
-        prompt_tokens[pos - 1]
-    }; // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
-    print_token(&tokenizer, token, token);
-    let mut outputs = Vec::new();
-    let mut raw_logits = [[0.0; VOCAB_SIZE]; 1];
-    while pos < args.steps {
-        // forward the transformer to get logits for the next token
-        let tokens = [token];
-        let positions = [pos];
-
-        transformer(&mut raw_logits, &tokens, &positions, &mut state, &model.weights);
-        let logits = &mut raw_logits[0];
-        if pos < prompt_tokens.len() {
-            // if we are still processing the input prompt, force the next prompt token
-            next = prompt_tokens[pos];
-            // println!("{}", logits[next]);
-        } else {
-            // sample the next token
-            if args.temperature == 0.0 {
-                // greedy argmax sampling: take the token with the highest probability
-                next = argmax(logits);
-                // println!("{}", logits[next]);
-            } else {
-                // apply the temperature to the logits
-                for q in 0..VOCAB_SIZE {
-                    logits[q] /= args.temperature;
-                }
-                // apply softmax to the logits to get the probabilities for next token
-                softmax(&mut logits[..VOCAB_SIZE]);
-                // we sample from this distribution to get the next token
-                next = random.sample(logits, VOCAB_SIZE);
-            }
-        };
-        // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
-        //println!("{} {}", next, state.logits[next]);
-        print_token(&tokenizer, token, next);
-
-        // advance forward
-        token = next;
-        outputs.push(token);
-        let l = outputs.len();
-
-        // Heuristic stopping criteria.
-        if l > 6
-            && outputs[l - 1] == RET
-            && outputs[l - 2] == RET
-            && outputs[l - 3] == RET
-            && outputs[l - 4] == RET
-        {
-            break;
-        }
-        pos += 1;
-    }
+    let (gen_time, ret) = generate(
+        &model,
+        &tokenizer,
+        &args.prompt,
+        args.steps,
+        &mut random,
+        args.temperature,
+        true
+    );
 
     // report achieved tok/s
-    let end = time_in_ms();
     println!(
         "\nachieved tok/s: {}",
-        (pos) as f32 / (end - start) as f32 * 1000.0
+        ((ret.len() - 1) as f32 / gen_time as f32) * 1000.0
     );
 }

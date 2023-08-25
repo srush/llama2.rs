@@ -7,6 +7,7 @@ import struct
 import torch
 from torch import nn
 from auto_gptq import AutoGPTQForCausalLM
+from auto_gptq.modeling import BaseGPTQForCausalLM
 from auto_gptq.nn_modules import qlinear
 from transformers.models.llama import modeling_llama
 
@@ -20,12 +21,12 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[to
 
 Serializable = torch.Tensor | qlinear.GeneralQuantLinear | modeling_llama.LlamaRMSNorm | nn.modules.linear.Linear | nn.Embedding
 
-def export(model_wrapper: AutoGPTQForCausalLM, path: pathlib.Path):
+def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path):
     """export the model weights in fp32 into .bin file to be read from C"""
     f = open(path, 'wb')
 
     print(model_wrapper.model)
-    model = model_wrapper.model.model
+    model: modeling_llama.LlamaModel = model_wrapper.model.model # type:ignore
 
     def serialize(k: Serializable):
         def write_buffer(w: torch.Tensor, transpose: bool = False, cast_to_float: bool = True):
@@ -42,6 +43,7 @@ def export(model_wrapper: AutoGPTQForCausalLM, path: pathlib.Path):
         if type(k) is torch.Tensor:
             write_buffer(k)
         elif type(k) in (modeling_llama.LlamaRMSNorm, nn.Embedding, nn.modules.linear.Linear):
+            assert isinstance(k, (modeling_llama.LlamaRMSNorm, nn.Embedding, nn.modules.linear.Linear))
             write_buffer(k.weight)
         elif type(k) is qlinear.GeneralQuantLinear or hasattr(k, 'qweight'):
             offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28])

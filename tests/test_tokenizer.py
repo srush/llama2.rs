@@ -1,6 +1,5 @@
 import torch
-from transformers import AutoTokenizer, pipeline, logging
-from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+from transformers import AutoTokenizer
 
 import llama2_rs
 

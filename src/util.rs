@@ -1,8 +1,10 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pyo3::{pyclass, pymethods};
+
+use crate::tokenizer::{Tokenizer, Token};
 
 pub fn read_float(file: &mut File) -> f32 {
     let mut buf = [0u8; 4];
@@ -56,7 +58,7 @@ pub struct Random {
 
 #[pymethods]
 impl Random {
-    #[staticmethod]
+    #[new]
     pub fn new() -> Random {
         // seed rng with time. if you want deterministic behavior use temperature 0.0
         Random {
@@ -81,6 +83,12 @@ impl Random {
     }
 }
 
+impl Default for Random {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // this isn't exposed to Python since we don't have a conversion to &[f32]
 impl Random {
     pub fn sample(&mut self, probabilities: &[f32], n: usize) -> usize {
@@ -95,4 +103,18 @@ impl Random {
         }
         n - 1 // in case of rounding errors
     }
+}
+
+pub fn get_token(tokenizer: &Tokenizer, token: Token, next: Token) -> &str {
+    let token_str = if token == 1 && tokenizer.vocab[next].starts_with(' ') {
+        &tokenizer.vocab[next][1..]
+    } else {
+        &tokenizer.vocab[next]
+    };
+    token_str
+}
+
+pub fn print_token(token_str: &str) {
+    print!("{}", token_str);
+    io::stdout().flush().expect("flush failed");
 }
