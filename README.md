@@ -69,6 +69,13 @@ target/release/llama2_rs -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool pe
 > Hello to all the cool people out there who are reading this. I am a newbie here and I am looking for some
 achieved tok/s: 9.048136
 ```
+### Todos
+
+* [ ] Support fast GPU processing with Triton
+* [ ] Support https://github.com/oobabooga/text-generation-webui
+* [ ] Documentation
+* [ ] Blog Post about the methods for fast gptq 
+
 
 ### Configuration
 
