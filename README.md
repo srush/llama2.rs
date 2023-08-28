@@ -6,12 +6,13 @@ The goal is to be as fast as possible. 🤗
 
 It has the following features:
 
-* Support for 4-bit GPT-Q Quantization
+* Support for 4-bit GPT-Q Quantization 
 * Batched prefill of prompt tokens
 * SIMD support for fast CPU inference
 * Memory mapping, loads 70B instantly.
 * Static size checks throughout
 * Support for Grouped Query Attention (needed for big Llamas)
+* Python calling API 
 
 Can run up on *1 tok/s* 70B Llama2 and *9 tok/s* 7B Llama2. (on my intel i9 desktop) 
 
@@ -90,7 +91,8 @@ Started as a port of the original code, with extra type information to make it e
 There are some dependencies: 
 * `memmap2`for memory mapping
 * `rayon` for parallel computation.
-* `clap` for command-line args. 
+* `clap` for command-line args.
+* `pyO3` for python calling
 * SIMD enabled support with `portable_simd`
 
 ### Why? 
