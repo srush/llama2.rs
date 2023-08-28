@@ -1,5 +1,6 @@
 use std::fs::File;
 
+#[cfg(feature = "python")]
 use pyo3::{pyclass, pymethods};
 
 use crate::constants::VOCAB_SIZE;
@@ -10,7 +11,7 @@ pub const START: Token = 1;
 pub const RET: Token = 13;
 
 #[derive(Debug)]
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct Tokenizer {
     pub vocab: Vec<String>,
     vocab_scores: Vec<f32>,
@@ -36,9 +37,7 @@ impl Tokenizer {
     }
 }
 
-#[pymethods]
 impl Tokenizer {
-    #[new]
     pub fn new(filename: &str) -> Tokenizer {
         let mut file = File::open(filename).expect(format!("Failed to open {}", filename).as_str());
         Tokenizer::load(&mut file)
@@ -106,5 +105,19 @@ impl Tokenizer {
                 }
             }
         }
+    }
+}
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl Tokenizer {
+    #[new]
+    pub fn new_py(filename: &str) -> Tokenizer {
+        Tokenizer::new(filename)
+    }
+
+    #[pyo3(name = "bpe_encode")]
+    pub fn bpe_encode_py(&self, text: &str) -> Vec<Token> {
+        self.bpe_encode(text)
     }
 }

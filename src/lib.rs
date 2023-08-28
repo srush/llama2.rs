@@ -1,10 +1,12 @@
 #![feature(portable_simd)]
 
-use std::{fs::File, io::{SeekFrom, Seek}, mem};
+use std::{fs::File, io::Seek, mem};
 
 use constants::Config;
 use memmap2::{Mmap, MmapOptions};
 use models::TWeights;
+
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 pub mod constants;
@@ -15,19 +17,14 @@ pub mod util;
 pub mod inference;
 
 #[allow(dead_code)]
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct LlamaModel {
     mmap: Mmap,
-    #[pyo3(get)]
     pub config: Config,
     pub weights: &'static TWeights,
 }
 
-#[pymethods]
 impl LlamaModel {
-    // NOTE: this pyo3 signature only applies to Python code (i.e. in Rust code you must specify debug).
-    #[new]
-    #[pyo3(signature = (checkpoint, debug=false))]
     pub fn from_file(checkpoint: &str, debug: bool) -> LlamaModel {
         let mut file = File::open(checkpoint).unwrap();
         let config = Config::load(&mut file);
@@ -42,6 +39,19 @@ impl LlamaModel {
     }
 }
 
+// workaround needed because of https://github.com/PyO3/pyo3/issues/780
+#[cfg(feature = "python")]
+#[pymethods]
+impl LlamaModel {
+    // NOTE: this pyo3 signature only applies to Python code (i.e. in Rust code you must specify debug).
+    #[new]
+    #[pyo3(signature = (checkpoint, debug=false))]
+    pub fn from_file_py(checkpoint: &str, debug: bool) -> LlamaModel {
+        LlamaModel::from_file(checkpoint, debug)
+    }
+}
+
+#[cfg(feature = "python")]
 #[pymodule]
 fn llama2_rs_pylib (_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<tokenizer::Tokenizer>()?;
