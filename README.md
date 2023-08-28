@@ -31,7 +31,7 @@ You can load models from the Hugging Face hub. For example this creates a versio
 
 ```
 > pip install torch
-> pip install transformers auto-gptq
+> pip install transformers auto-gptq click
 > python export.py l70b.act64.bin TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ gptq-4bit-64g-actorder_True
 ```
 
@@ -69,6 +69,27 @@ target/release/llama2_rs -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool pe
 > Hello to all the cool people out there who are reading this. I am a newbie here and I am looking for some
 achieved tok/s: 9.048136
 ```
+
+To run in Python, you need to first `pip install` from the main directory. You can then run the following code.
+
+```python
+import llama2_rs
+
+def test_llama2_13b_4_128act_can_generate():
+    model = llama2_rs.LlamaModel("lorca13b.act132.bin", False)
+    tokenizer = llama2_rs.Tokenizer("tokenizer.bin")
+    random = llama2_rs.Random()
+    response = llama2_rs.generate(
+        model,
+        tokenizer,
+        "Tell me zero-cost abstractions in Rust ",
+        50,
+        random, 
+        0.0
+    )
+```
+
+
 ### Todos
 
 * [ ] Support fast GPU processing with Triton
