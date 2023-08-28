@@ -29,10 +29,15 @@ path = "src/main.rs"
 13B = []
 70B = []
 
+# Choose group size - these are mutually exclusive
+group_32 = []
+group_64 = []
+group_128 = []
+
 # optionally enable AVX512 if your chipset supports it
 avx512 = []
 
-# currently enables Q_4_128 quantization
+# currently enables Q_4 quantization
 quantized = []
 
-default = ["13B", "quantized"]
+default = ["13B", "group_128", "quantized"]
