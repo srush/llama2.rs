@@ -25,8 +25,6 @@ To build, you'll need the nightly toolchain, which is used by default:
 > ulimit -s 10000000 # Increase your stack memory limit. 
 ```
 
-If you get a build error you may need to change `.cargo/config` to match your chipset.
-
 You can load models from the Hugging Face hub. For example this creates a version of a [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)) model with 4 bit quant and 64 sized groups:
 
 ```

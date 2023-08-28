@@ -24,5 +24,19 @@ name = "llama2_rs"
 path = "src/main.rs"
 
 [features]
+# Choose between Llama2 models - these are mutually exclusive
+7B = []
+13B = []
+70B = []
+
+# Choose group size - these are mutually exclusive
+group_32 = []
+group_64 = []
+group_128 = []
+
+# currently enables Q_4 quantization
+quantized = []
+
+default = ["13B", "group_128", "quantized"]
 model_size = []
 python = ["pyo3"]
