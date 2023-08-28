@@ -5,13 +5,14 @@ import pathlib
 import click
 import struct
 import torch
+from typing import Tuple, Union
 from torch import nn
-from auto_gptq import AutoGPTQForCausalLM
 from auto_gptq.modeling import BaseGPTQForCausalLM
+from auto_gptq import AutoGPTQForCausalLM
 from auto_gptq.nn_modules import qlinear
 from transformers.models.llama import modeling_llama
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[torch.Tensor, torch.Tensor]:
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tuple[torch.Tensor, torch.Tensor]:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
@@ -19,21 +20,21 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[to
     freqs_sin = torch.sin(freqs)  # imaginary part
     return freqs_cos, freqs_sin
 
-Serializable = torch.Tensor | qlinear.GeneralQuantLinear | modeling_llama.LlamaRMSNorm | nn.modules.linear.Linear | nn.Embedding
+Serializable = Union[torch.Tensor, qlinear.GeneralQuantLinear, modeling_llama.LlamaRMSNorm, nn.modules.linear.Linear, nn.Embedding]
 
-def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path):
-    """export the model weights in fp32 into .bin file to be read from C"""
+def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path, max_vocab_size: int = 32000):
+    """export the model weights in fp32 into .bin file to be read from Rust"""
     f = open(path, 'wb')
 
     print(model_wrapper.model)
-    model: modeling_llama.LlamaModel = model_wrapper.model.model # type:ignore
+    model = model_wrapper.model.model
 
     def serialize(k: Serializable):
         def write_buffer(w: torch.Tensor, transpose: bool = False, cast_to_float: bool = True):
             assert isinstance(w, torch.Tensor)
             print(w.shape)
             if transpose:
-                w = w.T            
+                w = w.T
             t = w.contiguous().view(-1).detach().cpu()
             if cast_to_float:
                 t = t.type(torch.float32)
@@ -73,8 +74,10 @@ def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path):
     p['n_layers'] = len(model.layers)
     p['n_heads'] = model.layers[0].self_attn.num_heads
     p['hidden_dim'] = model.layers[0].mlp.up_proj.qweight.shape[1]
-    p['vocab_size'] = model.embed_tokens.num_embeddings
+    p['vocab_size'] = min(model.embed_tokens.num_embeddings, max_vocab_size)
     p['max_seq_len'] = 2048
+    model.embed_tokens.weight.data = model.embed_tokens.weight[:p['vocab_size']]
+    model_wrapper.model.lm_head.weight.data = model_wrapper.model.lm_head.weight[:p['vocab_size']]
 
     n_kv_heads = p.get('n_kv_heads') or p['n_heads']
     header = struct.pack(
@@ -122,7 +125,8 @@ def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path):
 @click.argument("output-path", type=click.Path(exists=False, path_type=pathlib.Path))
 @click.argument("model-name", type=str)
 @click.argument("revision", type=str)
-def main(output_path: pathlib.Path, model_name: str, revision: str):
+@click.argument("max-vocab-size", type=int, default=32000)
+def main(output_path: pathlib.Path, model_name: str, revision: str, max_vocab_size: int):
     print(f"Loading model {model_name} / {revision} ...")
     model = AutoGPTQForCausalLM.from_quantized(
         model_name,
@@ -136,7 +140,7 @@ def main(output_path: pathlib.Path, model_name: str, revision: str):
         quantize_config=None,
     )
     print("Exporting...")
-    export(model, output_path)
+    export(model, output_path,  max_vocab_size)
 
 if __name__ == '__main__':
     main()

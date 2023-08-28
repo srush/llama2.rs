@@ -1,0 +1,4 @@
+click
+torch
+transformers
+auto-gptq
