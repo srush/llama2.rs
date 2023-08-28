@@ -5,13 +5,14 @@ import pathlib
 import click
 import struct
 import torch
+from typing import Tuple, Union
 from torch import nn
 from auto_gptq.modeling import BaseGPTQForCausalLM
 from auto_gptq import AutoGPTQForCausalLM
 from auto_gptq.nn_modules import qlinear
 from transformers.models.llama import modeling_llama
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[torch.Tensor, torch.Tensor]:
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tuple[torch.Tensor, torch.Tensor]:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
@@ -19,7 +20,7 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> tuple[to
     freqs_sin = torch.sin(freqs)  # imaginary part
     return freqs_cos, freqs_sin
 
-Serializable = torch.Tensor | qlinear.GeneralQuantLinear | modeling_llama.LlamaRMSNorm | nn.modules.linear.Linear | nn.Embedding
+Serializable = Union[torch.Tensor, qlinear.GeneralQuantLinear, modeling_llama.LlamaRMSNorm, nn.modules.linear.Linear, nn.Embedding]
 
 def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path):
     """export the model weights in fp32 into .bin file to be read from Rust"""
