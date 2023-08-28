@@ -34,9 +34,6 @@ group_32 = []
 group_64 = []
 group_128 = []
 
-# optionally enable AVX512 if your chipset supports it
-avx512 = []
-
 # currently enables Q_4 quantization
 quantized = []
 

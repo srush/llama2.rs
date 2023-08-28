@@ -37,17 +37,6 @@ fn main() {
         println!("cargo:rustc-cfg=quant=\"no\"");
     }
 
-    // set target-feature based on AVX512/AVX2 desired support
-    let avx512 = if cfg!(feature="avx512") {
-        if !std::is_x86_feature_detected!("avx512f") {
-            panic!("AVX512 is not supported on this machine, but the avx512 feature was requested");
-        }
-        ",+avx512f "
-    }
-    else {
-        ""
-    };
-
     let mut rustflags = [
         "-C target-cpu=native",
         "-C link-args=-Wl,-zstack-size=419430400"
@@ -55,7 +44,7 @@ fn main() {
 
     match env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
         "x86_64" => {
-            rustflags.push(format!("-C target-feature=+avx,+avx2,+fma,+sse3{}", avx512));
+            rustflags.push("-C target-feature=+avx,+avx2,+fma,+sse3".to_string());
         },
         // on Mac M* devices, SIMD support is via NEON, not AVX (and is enabled via target-cpu=native by default)
         // leave this here since we'll need explicit Accelerate linking for BLAS
