@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{Read, self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "python")]
 use pyo3::{pyclass, pymethods};
 
 use crate::tokenizer::{Tokenizer, Token};
@@ -51,14 +52,12 @@ pub fn time_in_ms() -> i64 {
 }
 
 // Probably should just use Rust random. This came from llama2.c
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct Random {
     seed: u64,
 }
 
-#[pymethods]
 impl Random {
-    #[new]
     pub fn new() -> Random {
         // seed rng with time. if you want deterministic behavior use temperature 0.0
         Random {
@@ -80,6 +79,15 @@ impl Random {
     fn random(&mut self) -> f32 {
         // random float32 in [0,1)
         (self.random_u32() >> 8) as f32 / 16777216.0
+    }
+}
+
+#[cfg(feature = "python")]
+#[pymethods]
+impl Random {
+    #[new]
+    pub fn new_py() -> Random {
+        Random::new()
     }
 }
 

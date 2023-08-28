@@ -57,6 +57,8 @@ pub mod group {
 
 pub use constants::*;
 pub use group::*;
+
+#[cfg(feature = "python")]
 use pyo3::pyclass;
 
 // Head size is constant but standardized.
@@ -69,7 +71,7 @@ pub const N_KV_HEADS: usize = N_HEADS / ATTN_GROUPS;
 // This is kept in for debugging.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-#[pyclass]
+#[cfg_attr(feature = "python", pyclass)]
 pub struct Config {
     dim: usize,        // transformer dimension
     hidden_dim: usize, // for ffn layers
