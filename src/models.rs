@@ -3,6 +3,7 @@ use crate::constants::{
     ATTN_GROUPS, BITS, DIM, GROUPSIZE, HEAD_SIZE, HIDDEN_DIM, KV_DIM, N_HEADS, N_KV_HEADS,
     N_LAYERS, SEQ_LEN, VOCAB_SIZE,
 };
+use pyo3::pyclass;
 use rayon::prelude::*;
 
 pub struct RunState {
@@ -121,6 +122,7 @@ mod model {
     type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
 
     #[repr(C)]
+    #[pyclass]
     pub struct QTransformerWeights {
         pub rms_eps: f32,
 

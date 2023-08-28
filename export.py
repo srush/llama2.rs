@@ -92,7 +92,6 @@ def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path, max_vocab_siz
     # next write out the embedding weights
     print("writing tok_embeddings...")
     f.write(memoryview(torch.tensor([model_wrapper.config.rms_norm_eps]).numpy()))
-
     serialize(model.embed_tokens)
 
     # now all the layers
