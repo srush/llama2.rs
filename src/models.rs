@@ -124,7 +124,7 @@ mod model {
     type Att2 = [QLinear2<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
     type AttKV2 = [QLinear2<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
 
-    #[repr(C)]
+
     pub struct QTransformerWeights2 {
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
@@ -154,7 +154,7 @@ mod model {
         // Classifier weights for the logits, on the last layer
         pub wcls: super::Linear<DIM, VOCAB_SIZE>, // (dim,)
     }
-
+    #[repr(C)]
     pub struct QTransformerWeights {
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)

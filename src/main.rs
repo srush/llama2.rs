@@ -110,10 +110,8 @@ fn main() {
         let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
         assert_eq!(mmap.len(), mem::size_of::<QTransformerWeights>());
         let res = unsafe { &*(mmap.as_ptr() as *const QTransformerWeights) };
-        println!("{:?}", res.wq[0].g_index);
+        //println!("{:?}", res.wq[0].g_index);
         let weights = convert(res).expect("conversion");
-        println!("{:?}", res.wq[0].g_index);
-        println!("{:?}", weights.wq[0].g_index);
     //    (x, mmap)
 
   //  };
