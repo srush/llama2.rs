@@ -1,3 +1,4 @@
+#[cfg(feature = "python")]
 use pyo3::pyfunction;
 
 use crate::models::{RunState, TWeights, transformer, softmax};
@@ -42,8 +43,8 @@ pub fn prefill<const A: usize>(
 }
 
 // NOTE: this pyo3 signature only applies to Python code (i.e. in Rust code you must specify print_tokens).
-#[pyfunction]
-#[pyo3(signature = (model, tokenizer, prompt, steps, random, temperature=0.0, print_tokens=false))]
+#[cfg_attr(feature = "python", pyfunction)]
+#[cfg_attr(feature = "python", pyo3(signature = (model, tokenizer, prompt, steps, random, temperature=0.0, print_tokens=false)))]
 pub fn generate(
     model: &LlamaModel,
     tokenizer: &Tokenizer,

@@ -9,7 +9,7 @@ edition = "2021"
 clap = { version = "4.3.23", features = ["derive"] }
 memmap2 = "0.7"
 rayon = "1.5"
-pyo3 = "0.19.0"
+pyo3 = { version = "0.19.0", optional = true}
 
 [profile.release]
 debug = true
@@ -25,3 +25,4 @@ path = "src/main.rs"
 
 [features]
 model_size = []
+python = ["pyo3"]
