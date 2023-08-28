@@ -1,6 +1,6 @@
 # llama2.rs 🤗
 
-This is a Rust implementation of Llama2 inference on CPU.
+This is a Rust implementation of Llama2 inference on CPU
 
 The goal is to be as fast as possible. 
 
@@ -124,8 +124,6 @@ There are some dependencies:
 * `pyO3` for python calling
 * SIMD enabled support with `portable_simd`
 
-### Why? 
+### Authors
 
-Mostly this was an exercise in learning some Rust. Was curious how you port over things like memory mapping, parallel processing, and some of the mathematical tricks. 
-
-This is my first Rust project, so if you are an expert I would love a code review!
+Llama2.rs is written by @srush and @rachtsingh.
