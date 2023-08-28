@@ -74,7 +74,9 @@ achieved tok/s: 9.048136
 * [ ] Support fast GPU processing with Triton
 * [ ] Support https://github.com/oobabooga/text-generation-webui
 * [ ] Documentation
-* [ ] Blog Post about the methods for fast gptq 
+* [ ] Blog Post about the methods for fast gptq
+* [ ] Remove dependency on AutoGPTQ for preloading
+* [ ] Support for safetensors directly. 
 
 
 ### Configuration
