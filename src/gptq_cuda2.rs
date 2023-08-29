@@ -101,6 +101,7 @@ fn matvec() {
 
 
 fn run()  -> Result<(), (Box<dyn Error>)> {
+    matvec();
     let qweight: [[i32; ING]; OUT] = [[1985229328; ING] ; OUT];     
     let scales: [[f32; GROUPS]; OUT] = [[10.0; GROUPS]; OUT];
     let qzeros:  [[i32; GROUPS]; OUTG] = [[1985229328; GROUPS]; OUTG];
@@ -216,7 +217,7 @@ fn run()  -> Result<(), (Box<dyn Error>)> {
     }
     
     println!("{:?}", &xout);
-    matvec();
+
     Ok(())
 }
 
