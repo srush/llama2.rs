@@ -54,7 +54,7 @@ def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path, max_vocab_siz
                 extract = extract.view(k.g_idx.shape[0], -1)[order]
                 store = extract << offset.repeat(1, extract.shape[0] // 8)[..., None]
                 store = store.view(k.qweight.shape[0], 8, k.qweight.shape[1])
-                final = torch.zeros(*k.qweight.shape, dtype=int)
+                final = torch.zeros(*k.qweight.shape, dtype=torch.int)
                 for i in range(8):
                     final = final | store[:, i]
                 return final
