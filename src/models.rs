@@ -10,6 +10,7 @@ mod x {
     pub type TWeights = QTransformerWeightsCuda;
 }
 
+#[cfg(quantized = "yes")]
 #[cfg(gpu = "no")]
 mod x {
     use crate::gptq::QTransformerWeights;

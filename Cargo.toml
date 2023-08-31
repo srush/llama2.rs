@@ -43,7 +43,7 @@ gpu = ["cust", "half"]
 quantized = []
 
 
-default = []
+default = ["7B"]
 model_size = []
 python = ["pyo3"]
 
