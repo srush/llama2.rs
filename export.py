@@ -47,14 +47,14 @@ def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path, max_vocab_siz
             assert isinstance(k, (modeling_llama.LlamaRMSNorm, nn.Embedding, nn.modules.linear.Linear))
             write_buffer(k.weight)
         elif type(k) is qlinear.GeneralQuantLinear or hasattr(k, 'qweight'):
-            offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28])
+            offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28], dtype=torch.int32)
             def rearrange(k: qlinear.GeneralQuantLinear):
                 order = k.g_idx.cpu().argsort(stable=True)
                 extract = (k.qweight.cpu()[:, None, :] >> offset[:, None]) & (2**4-1)
                 extract = extract.view(k.g_idx.shape[0], -1)[order]
                 store = extract << offset.repeat(1, extract.shape[0] // 8)[..., None]
                 store = store.view(k.qweight.shape[0], 8, k.qweight.shape[1])
-                final = torch.zeros(*k.qweight.shape, dtype=int)
+                final = torch.zeros(*k.qweight.shape, dtype=torch.int32)
                 for i in range(8):
                     final = final | store[:, i]
                 return final
