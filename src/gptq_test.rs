@@ -1,4 +1,9 @@
 #![feature(portable_simd)]
+
+// This file is a test to check that the matrix is correct.
+// Move to a real test.
+
+
 // Quant 4 bits
 use cust::prelude::*;
 use std::error::Error;
