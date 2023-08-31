@@ -1,35 +1,40 @@
 #![feature(portable_simd)]
 
-use std::{fs::File, io::Seek, mem};
+use std::{fs::File, mem};
 
 use constants::Config;
 use memmap2::{Mmap, MmapOptions};
-use models::{QTransformerWeights, QTransformerWeights2, TWeights, convert};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 pub mod constants;
+#[cfg(quant = "Q_4")]
 pub mod gptq;
+#[cfg(gpu = "yes")]
+pub mod gptq_cuda;
+pub mod inference;
+pub mod model;
 pub mod models;
 pub mod tokenizer;
 pub mod util;
-pub mod inference;
-pub mod gptq_cuda;
 
-#[cfg(gpu="yes")]
-mod Model {
-    use crate::models::QTransformerWeights2;
-    use std::{fs::File, io::Seek, mem};
+#[cfg(gpu = "yes")]
+mod llama_model {
+    use crate::gptq::QTransformerWeights;
+    use crate::gptq_cuda::{convert, QTransformerWeightsCuda};
+    use cust::prelude::*;
+    use std::io::Seek;
 
     #[allow(dead_code)]
     #[cfg_attr(feature = "python", pyclass)]
     pub struct LlamaModel {
         pub config: super::Config,
-        pub weights: QTransformerWeights2
+        pub weights: QTransformerWeightsCuda,
+        _ctx: Context,
     }
     impl LlamaModel {
-        pub fn weights(&self) -> &QTransformerWeights2 {
+        pub fn weights(&self) -> &QTransformerWeightsCuda {
             &self.weights
         }
 
@@ -38,31 +43,39 @@ mod Model {
         }
 
         pub fn from_file(checkpoint: &str, debug: bool) -> LlamaModel {
+            let _ctx = cust::quick_init().expect("start");
             let mut file = super::File::open(checkpoint).unwrap();
             let config = super::Config::load(&mut file);
             if debug {
                 println!("Configuration: {config:?}");
             }
             let start = file.stream_position().unwrap();
-            let mmap = unsafe { super::MmapOptions::new().offset(start).map(&file).unwrap() };
-            assert_eq!(mmap.len(), super::mem::size_of::<super::QTransformerWeights>());
-            let res = unsafe { &*(mmap.as_ptr() as *const super::QTransformerWeights) };
-         
-            LlamaModel { config, 
-                weights: super::convert(res).expect("conversion")}
+            let mmap: super::Mmap =
+                unsafe { super::MmapOptions::new().offset(start).map(&file).unwrap() };
+            assert_eq!(mmap.len(), super::mem::size_of::<QTransformerWeights>());
+            let res = unsafe { &*(mmap.as_ptr() as *const QTransformerWeights) };
+
+            LlamaModel {
+                config,
+                weights: convert(res).expect("conversion"),
+                _ctx: _ctx,
+            }
         }
     }
 }
 
-#[cfg(gpu="no")]
-mod Model {
+#[cfg(gpu = "no")]
+mod llama_model {
+    use crate::models::TWeights;
+
     #[allow(dead_code)]
     #[cfg_attr(feature = "python", pyclass)]
     pub struct LlamaModel {
-        mmap: Mmap,
-        pub config: Config,
+        mmap: super::Mmap,
+        pub config: super::Config,
         pub weights: &'static TWeights,
     }
+    use std::io::Seek;
     impl LlamaModel {
         pub fn weights(&self) -> &TWeights {
             self.weights
@@ -73,22 +86,26 @@ mod Model {
         }
 
         pub fn from_file(checkpoint: &str, debug: bool) -> LlamaModel {
-            let mut file = File::open(checkpoint).unwrap();
-            let config = Config::load(&mut file);
+            let mut file = super::File::open(checkpoint).unwrap();
+            let config = super::Config::load(&mut file);
             if debug {
                 println!("Configuration: {config:?}");
+                println!("No CUDA");
             }
             let start = file.stream_position().unwrap();
-            let mmap = unsafe { MmapOptions::new().offset(start).map(&file).unwrap() };
-            assert_eq!(mmap.len(), mem::size_of::<TWeights>());
+            let mmap = unsafe { super::MmapOptions::new().offset(start).map(&file).unwrap() };
+            assert_eq!(mmap.len(), super::mem::size_of::<TWeights>());
             let weights = unsafe { &*(mmap.as_ptr() as *const TWeights) };
-            weights
+            LlamaModel {
+                mmap: mmap,
+                config: config,
+                weights: weights,
+            }
         }
-
     }
 }
 
-pub use Model::LlamaModel;
+pub use llama_model::LlamaModel;
 
 // workaround needed because of https://github.com/PyO3/pyo3/issues/780
 #[cfg(feature = "python")]
@@ -104,7 +121,7 @@ impl LlamaModel {
 
 #[cfg(feature = "python")]
 #[pymodule]
-fn llama2_rs_pylib (_py: Python, m: &PyModule) -> PyResult<()> {
+fn llama2_rs_pylib(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<tokenizer::Tokenizer>()?;
     m.add_class::<util::Random>()?;
     m.add_class::<constants::Config>()?;

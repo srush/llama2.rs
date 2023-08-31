@@ -1,8 +1,69 @@
 // Quant 4 bits
+use crate::constants::*;
+use crate::model::Linear;
 use rayon::prelude::*;
 /// Code for quantized SIMD implementation.
-use std::{simd::{f32x8, i32x8, SimdFloat, SimdInt}, error::Error};
-use crate::constants::*;
+use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
+
+// QLinear is a quantized linear layer.
+// Instead of Linear<IN, OUT> you need to pass in
+// constructed values.
+// QLinear<IN, OUT, GROUPS, ING, OUTG> where
+// GROUPS = IN / GROUPSIZE
+// ING = IN / 32 * BITS
+// OUTG = OUT / 32 * BITS
+//
+// Rust Note: When there are constant int arith this won't be needed.
+
+/// Code for standard non-quantized matrix vector models.
+const fn int_div_up(x: usize, y: usize) -> usize {
+    x / y + if x % y == 0 { 0 } else { 1 }
+}
+const fn bit_div(x: usize) -> usize {
+    x / 32 * BITS
+}
+
+pub const DIM_GROUPS: usize = int_div_up(DIM, GROUPSIZE);
+pub const HDIM_GROUPS: usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
+pub const DIM_G: usize = bit_div(DIM);
+pub const KV_DIM_G: usize = bit_div(KV_DIM);
+pub const HDIM_G: usize = bit_div(HIDDEN_DIM);
+type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
+type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
+
+#[repr(C)]
+#[cfg_attr(feature = "python", pyclass)]
+pub struct QTransformerWeights {
+    pub rms_eps: f32,
+
+    // token embedding table
+    pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
+    // weights for rmsnorms
+    pub rms_att_weight: [[f32; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
+
+    // weights for matmuls
+    pub wq: Att,   // (layer, dim, dim)
+    pub wk: AttKV, // (layer, dim, dim)
+    pub wv: AttKV, // (layer, dim, dim)
+    pub wo: Att,   // (layer, dim, dim)
+
+    pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
+
+    // weights for ffn
+    pub w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+    pub w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
+    pub w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+
+    // final rmsnorm
+    pub rms_final_weight: [f32; DIM], // (dim,)
+
+    // Depreacted
+    pub _freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
+    pub _freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
+
+    // Classifier weights for the logits, on the last layer
+    pub wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
+}
 
 #[repr(C)]
 pub struct QLinear<
@@ -19,7 +80,7 @@ pub struct QLinear<
     // The scale term per group
     pub scales: [[f32; GROUPS]; OUT],
     // Remapping for ACT_ORDER=True
-    pub  g_index: [i32; IN],
+    pub g_index: [i32; IN],
 }
 
 impl<
@@ -30,7 +91,7 @@ impl<
         const OUTG: usize,
     > QLinear<IN, OUT, GROUPS, ING, OUTG>
 {
-    pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) ->  Result<(), (Box<dyn Error>)> {
+    pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) {
         assert_eq!(ING, IN / 32 * BITS);
         assert_eq!(OUTG, OUT / 32 * BITS);
 
@@ -112,7 +173,5 @@ impl<
                 xout[i][j] = xout_temp[j][i];
             }
         }
-        println!("{:?}", &xout[0][..10]);
-        Ok(())
     }
 }

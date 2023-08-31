@@ -1,11 +1,11 @@
 use std::fs::File;
-use std::io::{Read, self, Write};
+use std::io::{self, Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "python")]
 use pyo3::{pyclass, pymethods};
 
-use crate::tokenizer::{Tokenizer, Token};
+use crate::tokenizer::{Token, Tokenizer};
 
 pub fn read_float(file: &mut File) -> f32 {
     let mut buf = [0u8; 4];
