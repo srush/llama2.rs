@@ -7,6 +7,7 @@
 
 mod constants;
 mod gptq_cuda;
+mod gptq;
 mod models;
 mod tokenizer;
 mod util;
@@ -60,7 +61,7 @@ fn prefill<const A: usize>(
             let token = next;
             print_token(tokenizer, token, next)
         }
-        transformer(&mut fake_logits, &tokens, &positions, state, &weights);
+        transformer(&mut fake_logits, &tokens, &positions, state, weights);
     }
 }
 
@@ -112,6 +113,7 @@ fn main() {
         let res = unsafe { &*(mmap.as_ptr() as *const QTransformerWeights) };
         //println!("{:?}", res.wq[0].g_index);
         let weights = convert(res).expect("conversion");
+        //let weights = res;
     //    (x, mmap)
 
   //  };

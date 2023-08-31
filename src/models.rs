@@ -93,7 +93,8 @@ mod model {
 #[cfg(quant = "Q_4")]
 mod model {
     use super::*;
-    use crate::gptq_cuda::{QLinear, QLinear2};
+    use crate::gptq::{QLinear};
+    use crate::gptq_cuda::{QLinear2};
 
     // QLinear is a quantized linear layer.
     // Instead of Linear<IN, OUT> you need to pass in
@@ -121,15 +122,15 @@ mod model {
     type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
     type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
 
-    type Att2 = [QLinear2<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
-    type AttKV2 = [QLinear2<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
+    type Att2 = Vec<QLinear2<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G> >;
+    type AttKV2 = Vec<QLinear2<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G> >;
 
 
     pub struct QTransformerWeights2 {
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
         // weights for rmsnorms
-        pub rms_att_weight: [[f32; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
+        pub rms_att_weight: Vec<[f32; DIM]>, // (layer, dim) rmsnorm weights
 
         // weights for matmuls
         pub wq: Att2,   // (layer, dim, dim)
@@ -137,12 +138,12 @@ mod model {
         pub wv: AttKV2, // (layer, dim, dim)
         pub wo: Att2,   // (layer, dim, dim)
 
-        pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
+        pub rms_ffn_weight: Vec<[f32; DIM]>, // (layer, dim)
 
         // weights for ffn
-        pub w1: [QLinear2<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
-        pub w2: [QLinear2<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
-        pub w3: [QLinear2<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+        pub w1: Vec<QLinear2<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>>, // (layer, hidden_dim, dim)
+        pub w2: Vec<QLinear2<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>>, // (layer, dim, hidden_dim)
+        pub w3: Vec<QLinear2<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>>, // (layer, hidden_dim, dim)
 
         // final rmsnorm
         pub rms_final_weight: [f32; DIM], // (dim,)
@@ -191,15 +192,15 @@ mod model {
 pub fn convert(sel: &QTransformerWeights) -> Result<QTransformerWeights2, Box<dyn Error>> {
     let q = QTransformerWeights2 {
         token_embedding_table:  sel.token_embedding_table,
-        rms_att_weight: sel.rms_att_weight,
-        wq: sel.wq.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
-        wk: sel.wk.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
-        wv: sel.wv.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
-        wo: sel.wo.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
-        rms_ffn_weight: sel.rms_ffn_weight,
-        w1: sel.w1.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
-        w2: sel.w2.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
-        w3: sel.w3.iter().map(|x| x.convert().expect("works")).collect::<Vec<_>>().try_into().expect("works"),
+        rms_att_weight: sel.rms_att_weight.into_iter().collect(),
+        wq: sel.wq.iter().map(|x| x.convert().expect("works")).collect(),
+        wk: sel.wk.iter().map(|x| x.convert().expect("works")).collect(),
+        wv: sel.wv.iter().map(|x| x.convert().expect("works")).collect(),
+        wo: sel.wo.iter().map(|x| x.convert().expect("works")).collect(),
+        rms_ffn_weight: sel.rms_ffn_weight.into_iter().collect(),
+        w1: sel.w1.iter().map(|x| x.convert().expect("works")).collect(),
+        w2: sel.w2.iter().map(|x| x.convert().expect("works")).collect(),
+        w3: sel.w3.iter().map(|x| x.convert().expect("works")).collect(),
         rms_final_weight: sel.rms_final_weight,
         _freq_cis_real: sel._freq_cis_real,
         _freq_cis_imag: sel._freq_cis_imag,

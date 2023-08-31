@@ -1,7 +1,8 @@
 // Quant 4 bits
 use rayon::prelude::*;
 /// Code for quantized SIMD implementation.
-use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
+use std::{simd::{f32x8, i32x8, SimdFloat, SimdInt}, error::Error};
+use crate::constants::*;
 
 #[repr(C)]
 pub struct QLinear<
@@ -12,13 +13,13 @@ pub struct QLinear<
     const OUTG: usize,
 > {
     // The quantized weights
-    qweight: [[i32; ING]; OUT],
+    pub qweight: [[i32; ING]; OUT],
     // The zero term per group.
-    qzeros: [[i32; GROUPS]; OUTG],
+    pub qzeros: [[i32; GROUPS]; OUTG],
     // The scale term per group
-    scales: [[f32; GROUPS]; OUT],
+    pub scales: [[f32; GROUPS]; OUT],
     // Remapping for ACT_ORDER=True
-    g_index: [i32; IN],
+    pub  g_index: [i32; IN],
 }
 
 impl<
@@ -29,7 +30,7 @@ impl<
         const OUTG: usize,
     > QLinear<IN, OUT, GROUPS, ING, OUTG>
 {
-    pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) {
+    pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) ->  Result<(), (Box<dyn Error>)> {
         assert_eq!(ING, IN / 32 * BITS);
         assert_eq!(OUTG, OUT / 32 * BITS);
 
@@ -112,5 +113,7 @@ impl<
                 xout[i][j] = xout_temp[j][i];
             }
         }
+        println!("{:?}", &xout[0][..10]);
+        Ok(())
     }
 }
