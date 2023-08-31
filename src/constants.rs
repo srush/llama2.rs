@@ -60,7 +60,6 @@ pub mod group {
     pub const GROUPSIZE: usize = 0;
 }
 
-
 pub use constants::*;
 pub use group::*;
 
