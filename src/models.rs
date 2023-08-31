@@ -90,11 +90,13 @@ mod model {
     pub type TWeights = super::TransformerWeights;
 }
 
+
+
 #[cfg(quant = "Q_4")]
 mod model {
     use super::*;
     use crate::gptq::{QLinear};
-    use crate::gptq_cuda::{QLinear2};
+    use crate::gptq_cuda::{QLinearCuda};
 
     // QLinear is a quantized linear layer.
     // Instead of Linear<IN, OUT> you need to pass in
@@ -122,8 +124,8 @@ mod model {
     type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
     type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
 
-    type Att2 = Vec<QLinear2<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G> >;
-    type AttKV2 = Vec<QLinear2<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G> >;
+    type Att2 = Vec<QLinearCuda<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G> >;
+    type AttKV2 = Vec<QLinearCuda<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G> >;
 
 
     pub struct QTransformerWeights2 {
@@ -141,9 +143,9 @@ mod model {
         pub rms_ffn_weight: Vec<[f32; DIM]>, // (layer, dim)
 
         // weights for ffn
-        pub w1: Vec<QLinear2<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>>, // (layer, hidden_dim, dim)
-        pub w2: Vec<QLinear2<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>>, // (layer, dim, hidden_dim)
-        pub w3: Vec<QLinear2<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>>, // (layer, hidden_dim, dim)
+        pub w1: Vec<QLinearCuda<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>>, // (layer, hidden_dim, dim)
+        pub w2: Vec<QLinearCuda<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>>, // (layer, dim, hidden_dim)
+        pub w3: Vec<QLinearCuda<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>>, // (layer, hidden_dim, dim)
 
         // final rmsnorm
         pub rms_final_weight: [f32; DIM], // (dim,)
@@ -389,9 +391,9 @@ pub fn transformer<const B: usize>(
             // }
 
 
-            w.wq[l].matvec(&mut q, &xb).expect("works");
-            w.wk[l].matvec(&mut k, &xb).expect("works");
-            w.wv[l].matvec(&mut v, &xb).expect("works");
+            w.wq[l].matvec(&mut q, &xb);
+            w.wk[l].matvec(&mut k, &xb);
+            w.wv[l].matvec(&mut v, &xb);
 
             for i in 0..B {
                 rope(&mut q[i], &mut k[i], pos[i]);
@@ -425,7 +427,7 @@ pub fn transformer<const B: usize>(
         }
         {
             // final matvec to get the output of the attention
-            w.wo[l].matvec(&mut xb2, &xb).expect("works");
+            w.wo[l].matvec(&mut xb2, &xb);
 
             // residual connection back into x
             for i in 0..B {
@@ -436,15 +438,15 @@ pub fn transformer<const B: usize>(
 
             // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
             // first calculate self.w1(x) and self.w3(x)
-            w.w1[l].matvec(&mut hb, &xb).expect("works");
-            w.w3[l].matvec(&mut hb2, &xb).expect("works");
+            w.w1[l].matvec(&mut hb, &xb);
+            w.w3[l].matvec(&mut hb2, &xb);
 
             for (hb, hb2) in hb.iter_mut().zip(hb2.iter()) {
                 silu(hb, hb2);
             }
 
             // final matvec to get the output of the ffn
-            w.w2[l].matvec(&mut xb, &hb).expect("works");
+            w.w2[l].matvec(&mut xb, &hb);
         }
 
         // residual connection
