@@ -1,17 +1,18 @@
-# llama2.rs
+# llama2.rs 🤗
 
-This is a Rust implementation of Llama2 inference on CPU.
+This is a Rust implementation of Llama2 inference on CPU
 
-The goal is to be as fast as possible. 🤗
+The goal is to be as fast as possible. 
 
 It has the following features:
 
-* Support for 4-bit GPT-Q Quantization
+* Support for 4-bit GPT-Q Quantization 
 * Batched prefill of prompt tokens
 * SIMD support for fast CPU inference
 * Memory mapping, loads 70B instantly.
-* Static size checks throughout
+* Static size checks for safety
 * Support for Grouped Query Attention (needed for big Llamas)
+* Python calling API 
 
 Can run up on *1 tok/s* 70B Llama2 and *9 tok/s* 7B Llama2. (on my intel i9 desktop) 
 
@@ -24,29 +25,19 @@ To build, you'll need the nightly toolchain, which is used by default:
 > ulimit -s 10000000 # Increase your stack memory limit. 
 ```
 
-If you get a build error you may need to change `.cargo/config` to match your chipset.
-
 You can load models from the Hugging Face hub. For example this creates a version of a [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)) model with 4 bit quant and 64 sized groups:
 
 ```
-> pip install torch
-> pip install transformers auto-gptq
+> pip install -r requirements.export.txt
 > python export.py l70b.act64.bin TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ gptq-4bit-64g-actorder_True
 ```
 
-The library needs to be *recompiled* to match the model. You do that by editing the `.cargo/config`. In this case it would be. 
-
-```
- "--cfg", 'model_size="70B"', 
- "--cfg", 'quant="Q_4"', 
- "--cfg", 'group_size="64"'
-```
+The library needs to be *recompiled* to match the model. You can do this with cargo.
 
 To run:
 
 ```
-> cargo build --release
-> target/release/llama2_rs -c llama2-70b-q.bin -t 0.0 -s 11 -p "The only thing"                                                                                                                                 
+> cargo run --release --features 70B,group_64 -- -c llama2-70b-q.bin -t 0.0 -s 11 -p "The only thing"                                                                                                                                 
 The only thing that I can think of is that the          
 achieved tok/s: 0.89155835
 ```
@@ -56,18 +47,57 @@ Honestly, not so bad for running on my GPU machine, significantly faster than ll
 Here's a run of 13B quantized:
 
 ```bash
-target/release/llama2_rs -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
-> Hello to all the cool people out there who are reading this. I hope you are having a great day. I am here
+> cargo run --release --features 13B,group_128 -- -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+Hello to all the cool people out there who are reading this. I hope you are having a great day. I am here
 achieved tok/s: 5.1588936
 ```
 
 Here's a run of 7B quantized:
 
 ```bash
-target/release/llama2_rs -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+cargo run --release --features 7B,group_128 -- -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
 > Hello to all the cool people out there who are reading this. I am a newbie here and I am looking for some
 achieved tok/s: 9.048136
 ```
+
+### Python
+
+To run in Python, you need to first compile from the main directory with the python flag. 
+
+```bash
+cargo build --release --features 7B,group_128,python
+pip install .
+```
+
+You can then run the following code.
+
+```python
+import llama2_rs
+
+def test_llama2_13b_4_128act_can_generate():
+    model = llama2_rs.LlamaModel("lorca13b.act132.bin", False)
+    tokenizer = llama2_rs.Tokenizer("tokenizer.bin")
+    random = llama2_rs.Random()
+    response = llama2_rs.generate(
+        model,
+        tokenizer,
+        "Tell me zero-cost abstractions in Rust ",
+        50,
+        random, 
+        0.0
+    )
+```
+
+
+### Todos
+
+* [ ] Support fast GPU processing with Triton
+* [ ] Support https://github.com/oobabooga/text-generation-webui
+* [ ] Documentation
+* [ ] Blog Post about the methods for fast gptq
+* [ ] Remove dependency on AutoGPTQ for preloading
+* [ ] Support for safetensors directly. 
+
 
 ### Configuration
 
@@ -90,11 +120,10 @@ Started as a port of the original code, with extra type information to make it e
 There are some dependencies: 
 * `memmap2`for memory mapping
 * `rayon` for parallel computation.
-* `clap` for command-line args. 
+* `clap` for command-line args.
+* `pyO3` for python calling
 * SIMD enabled support with `portable_simd`
 
-### Why? 
+### Authors
 
-Mostly this was an exercise in learning some Rust. Was curious how you port over things like memory mapping, parallel processing, and some of the mathematical tricks. 
-
-This is my first Rust project, so if you are an expert I would love a code review!
+Llama2.rs is written by @srush and @rachtsingh.

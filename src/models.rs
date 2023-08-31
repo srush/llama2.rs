@@ -4,6 +4,8 @@ use crate::constants::{
     ATTN_GROUPS, BITS, DIM, GROUPSIZE, HEAD_SIZE, HIDDEN_DIM, KV_DIM, N_HEADS, N_KV_HEADS,
     N_LAYERS, SEQ_LEN, VOCAB_SIZE,
 };
+#[cfg(feature = "python")]
+use pyo3::pyclass;
 use rayon::prelude::*;
 
 pub struct RunState {
@@ -55,6 +57,7 @@ impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
 #[repr(C)]
 #[allow(dead_code)]
 pub struct TransformerWeights {
+    pub rms_eps: f32,
 
     // token embedding table
     pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE],
@@ -158,7 +161,10 @@ mod model {
         pub wcls: super::Linear<DIM, VOCAB_SIZE>, // (dim,)
     }
     #[repr(C)]
+    #[cfg_attr(feature = "python", pyclass)]
     pub struct QTransformerWeights {
+        pub rms_eps: f32,
+
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
         // weights for rmsnorms
@@ -223,13 +229,13 @@ fn accum(a: &mut [f32], b: &[f32]) {
     }
 }
 
-fn rmsnorm(o: &mut [f32; DIM], xo: &[f32; DIM], weight: &[f32; DIM]) {
+fn rmsnorm(o: &mut [f32; DIM], xo: &[f32; DIM], weight: &[f32; DIM], epsilon: f32) {
     // calculate sum of squares
     let mut ss = xo.iter().fold(0.0, |acc, x| acc + x * x);
 
     // take mean
     ss /= DIM as f32;
-    ss += 1e-5;
+    ss += epsilon;
     ss = 1.0 / ss.sqrt();
     // normalize and scale
     for (j, weight_j) in weight.iter().enumerate() {
@@ -270,27 +276,31 @@ fn silu(s: &mut [f32], s2: &[f32]) {
     }
 }
 
-fn rope(queries: &mut [f32], keys: &mut [f32], pos: usize) {
+fn rope(queries: &mut [f32; DIM], keys: &mut [f32; KV_DIM], pos: usize) {
     for h in 0..N_HEADS {
         // get the q and k vectors for this head
-        let q = &mut queries[h * HEAD_SIZE..];
+        let q = &mut queries[h * HEAD_SIZE..][..HEAD_SIZE];
 
         // rotate q and k by the freq_cis_real and freq_cis_imag
-        for i in (0..HEAD_SIZE).step_by(2) {
-            let freq = 1.0 / f32::powf(100000.0, (i as f32) / (HEAD_SIZE as f32));
-            let val = pos as f32 * freq;
+        for i in 0..HEAD_SIZE {
+            let freq = 1.0 / f32::powf(10000.0, ((2 * i % HEAD_SIZE) as f32) / (HEAD_SIZE as f32));
+            let val = (pos as f32) * freq;
             let fcr = f32::cos(val);
             let fci = f32::sin(val);
-            let q0 = q[i];
-            let q1 = q[i + 1];
-            q[i] = q0 * fcr - q1 * fci;
-            q[i + 1] = q0 * fci + q1 * fcr;
+
+            if i < HEAD_SIZE / 2 {
+                q[i] = q[i] * fcr - q[(HEAD_SIZE / 2) + i] * fci;
+            } else {
+                q[i] = q[i] * fcr + q[i - (HEAD_SIZE / 2)] * fci;
+            }
+
             if h < N_KV_HEADS {
-                let k = &mut keys[h * HEAD_SIZE..];
-                let k0 = k[i];
-                let k1 = k[i + 1];
-                k[i] = k0 * fcr - k1 * fci;
-                k[i + 1] = k0 * fci + k1 * fcr;
+                let k = &mut keys[h * HEAD_SIZE..][..HEAD_SIZE];
+                if i < HEAD_SIZE / 2 {
+                    k[i] = k[i] * fcr - k[(HEAD_SIZE / 2) + i] * fci;
+                } else {
+                    k[i] = k[i] * fcr + k[i - (HEAD_SIZE / 2)] * fci;
+                }
             }
         }
     }
@@ -384,7 +394,7 @@ pub fn transformer<const B: usize>(
             // }
             // attention rmsnorm
             for (xb, x) in xb.iter_mut().zip(x.iter()) {
-                rmsnorm(xb, x, &w.rms_att_weight[l]);
+                rmsnorm(xb, x, &w.rms_att_weight[l], w.rms_eps);
             }
             // if l == 0 {
             //     println!("norm {:?}", xb[0]);
@@ -433,7 +443,7 @@ pub fn transformer<const B: usize>(
             for i in 0..B {
                 accum(&mut x[i], &xb2[i]);
                 // ffn rmsnorm
-                rmsnorm(&mut xb[i], &x[i], &w.rms_ffn_weight[l]);
+                rmsnorm(&mut xb[i], &x[i], &w.rms_ffn_weight[l], w.rms_eps);
             }
 
             // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -458,7 +468,7 @@ pub fn transformer<const B: usize>(
     if B == 1 {
         // final rmsnorm
         for (x, fin) in x.iter().zip(fin.iter_mut()) {
-            rmsnorm(fin, x, &w.rms_final_weight);
+            rmsnorm(fin, x, &w.rms_final_weight, w.rms_eps);
         }
 
         // classifier into logits

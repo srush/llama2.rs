@@ -34,7 +34,6 @@ impl<
         assert_eq!(ING, IN / 32 * BITS);
         assert_eq!(OUTG, OUT / 32 * BITS);
 
-
         // Transpose the output.
         let mut xout_temp = [[0.0; B]; OUT];
         for i in 0..OUT {
@@ -88,14 +87,14 @@ impl<
                 let qz = ((qzs >> (BITS * out_elem)) & mask) + 1;
                 let scale_simd = f32x8::splat(*scale);
                 let zero_simd = i32x8::splat(qz);
-                // Iterate over chunks of 8 weights. 
+                // Iterate over chunks of 8 weights.
                 for (&v, x) in qweight.iter().zip(x_temp) {
                     //Extract v into 8 chunks
                     let num_simd = i32x8::splat(v);
                     let qw: i32x8 = (num_simd >> shift_right) & mask_4bits;
                     let combine: f32x8 = (qw - zero_simd).cast::<f32>();
                     let weight: f32x8 = scale_simd * combine;
-                    
+
                     // For each in the batch mult weight by input.
                     for (&x, s) in x.iter().zip(sum.iter_mut()) {
                         *s += weight * x;

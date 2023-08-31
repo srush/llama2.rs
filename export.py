@@ -1,17 +1,18 @@
 """
 This script exports the AutoGPT-Q Llama 2 weights in llama2rs.bin format.
 """
-import os
-import sys
+import pathlib
+import click
 import struct
-from pathlib import Path
-import json
 import torch
-from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-from transformers import AutoTokenizer
+from typing import Tuple, Union
+from torch import nn
+from auto_gptq.modeling import BaseGPTQForCausalLM
+from auto_gptq import AutoGPTQForCausalLM
+from auto_gptq.nn_modules import qlinear
+from transformers.models.llama import modeling_llama
 
-
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> Tuple[torch.Tensor, torch.Tensor]:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
@@ -19,75 +20,69 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs_sin = torch.sin(freqs)  # imaginary part
     return freqs_cos, freqs_sin
 
+Serializable = Union[torch.Tensor, qlinear.GeneralQuantLinear, modeling_llama.LlamaRMSNorm, nn.modules.linear.Linear, nn.Embedding]
 
-def export(model2, filepath='model.bin'):
-    """export the model weights in fp32 into .bin file to be read from C"""
-    f = open(filepath, 'wb')
-    p = {}
+def export(model_wrapper: BaseGPTQForCausalLM, path: pathlib.Path, max_vocab_size: int = 32000):
+    """export the model weights in fp32 into .bin file to be read from Rust"""
+    f = open(path, 'wb')
 
-    EXPAND = False
-    model = model2.model.model
-    p['dim'] = model.layers[0].mlp.up_proj.g_idx.shape[0]
-    p['n_layers'] = len(model.layers)
-    print(model2.model)
-    def serialize(k, max_size=1e8):
-        w = None
-        if isinstance(k, torch.Tensor):
-            w = k       
-        # elif "GeneralQuantLinear" in str(k.__class__) and EXPAND:
-        #     w = k.build()[0].T
-        
-        elif "GeneralQuantLinear" not in str(k.__class__):
-            w = k.weight
-        offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28])
-        if w is None:
-            def rearrange(k):
+    print(model_wrapper.model)
+    model = model_wrapper.model.model
+
+    def serialize(k: Serializable):
+        def write_buffer(w: torch.Tensor, transpose: bool = False, cast_to_float: bool = True):
+            assert isinstance(w, torch.Tensor)
+            print(w.shape)
+            if transpose:
+                w = w.T
+            t = w.contiguous().view(-1).detach().cpu()
+            if cast_to_float:
+                t = t.type(torch.float32)
+            t = t.numpy()
+            f.write(memoryview(t))
+
+        if type(k) is torch.Tensor:
+            write_buffer(k)
+        elif type(k) in (modeling_llama.LlamaRMSNorm, nn.Embedding, nn.modules.linear.Linear):
+            assert isinstance(k, (modeling_llama.LlamaRMSNorm, nn.Embedding, nn.modules.linear.Linear))
+            write_buffer(k.weight)
+        elif type(k) is qlinear.GeneralQuantLinear or hasattr(k, 'qweight'):
+            offset = torch.tensor([0, 4, 8, 12, 16, 20, 24, 28], dtype=torch.int32)
+            def rearrange(k: qlinear.GeneralQuantLinear):
                 order = k.g_idx.cpu().argsort(stable=True)
                 extract = (k.qweight.cpu()[:, None, :] >> offset[:, None]) & (2**4-1)
                 extract = extract.view(k.g_idx.shape[0], -1)[order]
                 store = extract << offset.repeat(1, extract.shape[0] // 8)[..., None]
                 store = store.view(k.qweight.shape[0], 8, k.qweight.shape[1])
-                final = torch.zeros(*k.qweight.shape, dtype=int)
+                final = torch.zeros(*k.qweight.shape, dtype=torch.int32)
                 for i in range(8):
                     final = final | store[:, i]
-                # print(final.shape, k.qweight.shape)
-                # print(order)
-                # print(final)
-                # print(k.qweight)
-
                 return final
-            for w in [rearrange(k).type(torch.int32), k.qzeros.type(torch.int32), k.scales.type(torch.float32), k.g_idx.argsort(stable=True).type(torch.int32)]:
-                print(w.shape)
-                t = w.T.contiguous().view(-1).detach().cpu().numpy()
-                f.write(memoryview(t))
+            for w in [
+                rearrange(k).type(torch.int32),
+                k.qzeros.type(torch.int32),
+                k.scales.type(torch.float32),
+                k.g_idx.argsort(stable=True).type(torch.int32)
+            ]:
+                write_buffer(w, transpose=len(w.size()) == 2, cast_to_float=False)
         else:
-            if hasattr(k, "weight"):
-                w = k.weight
-            else:
-                w = k
-            print("Regular")
-            print(w.shape)
-            t = w.contiguous().view(-1).detach().cpu().type(torch.float32)
-            if t.shape[0] > max_size:
-                t = t[:max_size].contiguous()
-            if len(t.shape) > 1 and t.shape[1] > max_size:
-                t = t[:, :max_size].contiguous()
-            f.write(memoryview(t.numpy()))
-
-        # del state_dict[key]
-
+            raise ValueError(f"Unable to export this type of weight: {k}")
 
     # first write out the header
+    p = {}
+    p['dim'] = model.layers[0].mlp.up_proj.g_idx.shape[0]
+    p['n_layers'] = len(model.layers)
     p['n_heads'] = model.layers[0].self_attn.num_heads
-    hidden_dim = model.layers[0].mlp.up_proj.qweight.shape[1]
-    
-    p['vocab_size'] = 32000
+    p['hidden_dim'] = model.layers[0].mlp.up_proj.qweight.shape[1]
+    p['vocab_size'] = min(model.embed_tokens.num_embeddings, max_vocab_size)
     p['max_seq_len'] = 2048
+    model.embed_tokens.weight.data = model.embed_tokens.weight[:p['vocab_size']]
+    model_wrapper.model.lm_head.weight.data = model_wrapper.model.lm_head.weight[:p['vocab_size']]
 
     n_kv_heads = p.get('n_kv_heads') or p['n_heads']
     header = struct.pack(
         'iiiiiii',
-        p['dim'], hidden_dim, p['n_layers'], p['n_heads'],
+        p['dim'], p['hidden_dim'], p['n_layers'], p['n_heads'],
         n_kv_heads, -p['vocab_size'], p['max_seq_len']
     )
     # NOTE ABOVE: -ve vocab_size is indicating that the classifier weights are present
@@ -96,7 +91,8 @@ def export(model2, filepath='model.bin'):
 
     # next write out the embedding weights
     print("writing tok_embeddings...")
-    serialize(model.embed_tokens, 32000)
+    f.write(memoryview(torch.tensor([model_wrapper.config.rms_norm_eps]).numpy()))
+    serialize(model.embed_tokens)
 
     # now all the layers
     # attention weights
@@ -110,7 +106,7 @@ def export(model2, filepath='model.bin'):
     for i in range(p['n_layers']): serialize(model.layers[i].mlp.gate_proj)
     for i in range(p['n_layers']): serialize(model.layers[i].mlp.down_proj)
     for i in range(p['n_layers']): serialize(model.layers[i].mlp.up_proj)
-    
+
     # final rmsnorm
 
     serialize(model.norm)
@@ -120,33 +116,31 @@ def export(model2, filepath='model.bin'):
     serialize(freqs_sin[:p['max_seq_len']])
 
     # finally write the output weights
-    serialize(model2.model.lm_head, 32000)
+    serialize(model_wrapper.model.lm_head)
 
     f.close()
-    print(f"wrote {filepath}")
+    print(f"wrote {path}")
 
-def load_and_export(model_name, revision, output_path):
-    use_triton = False
-    model = AutoGPTQForCausalLM.from_quantized(model_name,
-            #model_basename=model_basename,
-            use_safetensors=True,
-            revision=revision,
-            inject_fused_attention = False,
-            inject_fused_mlp = False,
-            trust_remote_code=True,
-            device="cpu",
-            use_triton=use_triton,                                   
-            quantize_config=None,
+@click.command()
+@click.argument("output-path", type=click.Path(exists=False, path_type=pathlib.Path))
+@click.argument("model-name", type=str)
+@click.argument("revision", type=str)
+@click.argument("max-vocab-size", type=int, default=32000)
+def main(output_path: pathlib.Path, model_name: str, revision: str, max_vocab_size: int):
+    print(f"Loading model {model_name} / {revision} ...")
+    model = AutoGPTQForCausalLM.from_quantized(
+        model_name,
+        revision=revision,
+        use_safetensors=True,
+        trust_remote_code=True,
+        device="cpu",
+        inject_fused_attention=False,
+        inject_fused_mlp=False,
+        use_triton=False,
+        quantize_config=None,
     )
-    export(model, output_path)
+    print("Exporting...")
+    export(model, output_path,  max_vocab_size)
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
-        print('Failure need args in this form.')
-        print('[output path] [path] [revision]')
-        exit()
-
-    output_path = sys.argv[1]
-    model_name = sys.argv[2]
-    revision = sys.argv[3]
-    load_and_export(model_name, revision, output_path) 
+    main()

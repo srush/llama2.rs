@@ -10,6 +10,8 @@ clap = { version = "4.3.23", features = ["derive"] }
 cust = "0.3.2"
 memmap2 = "0.7"
 rayon = "1.5"
+pyo3 = { version = "0.19.0", optional = true}
+half = "2.3.1"
 rand = "0.8.5"
 half = "2.3.1"
 
@@ -20,5 +22,29 @@ path = "src/gptq_cuda2.rs"
 [profile.release]
 debug = true
 
+[lib]
+name = "llama2_rs"
+crate-type = ["rlib", "cdylib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "llama2_rs"
+path = "src/main.rs"
+
 [features]
+# Choose between Llama2 models - these are mutually exclusive
+7B = []
+13B = []
+70B = []
+
+# Choose group size - these are mutually exclusive
+group_32 = []
+group_64 = []
+group_128 = []
+
+# currently enables Q_4 quantization
+quantized = []
+
+default = ["13B", "group_128", "quantized"]
 model_size = []
+python = ["pyo3"]

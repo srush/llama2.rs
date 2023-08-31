@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.2,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "llama2_rs"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+    "click",
+    "torch",
+    "transformers",
+    "auto_gptq <= 0.3.1",
+]
+
+# see https://github.com/PyO3/maturin/tree/main/test-crates/pyo3-mixed-py-subdir
+# for the directory structure
+[tool.maturin]
+features = ["pyo3/extension-module", "python"]
+python-source = "python"
+module-name = "llama2_rs.llama2_rs_pylib"
