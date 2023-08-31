@@ -132,6 +132,7 @@ mod model {
 
 
     pub struct QTransformerWeights2 {
+        pub rms_eps: f32,
         // token embedding table
         pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
         // weights for rmsnorms
@@ -199,6 +200,7 @@ mod model {
 
 pub fn convert(sel: &QTransformerWeights) -> Result<QTransformerWeights2, Box<dyn Error>> {
     let q = QTransformerWeights2 {
+        rms_eps: sel.rms_eps,
         token_embedding_table:  sel.token_embedding_table,
         rms_att_weight: sel.rms_att_weight.into_iter().collect(),
         wq: sel.wq.iter().map(|x| x.convert().expect("works")).collect(),

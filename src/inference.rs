@@ -74,13 +74,14 @@ pub fn generate(
 
     // Do a little backoff to handle different sizes.This costs us compilation time,
     // But allows us to compile versions of with the longest lnength prefill possible.
-    prefill::<64>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<32>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<16>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<8>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<4>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<2>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-
+    if (model.prefill()) {
+        prefill::<64>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights(), print_tokens);
+        prefill::<32>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights(), print_tokens);
+        prefill::<16>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights(), print_tokens);
+        prefill::<8>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights(), print_tokens);
+        prefill::<4>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights(), print_tokens);
+        prefill::<2>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights(), print_tokens);
+    }
     let mut token: Token = if pos == 0 {
         START
     } else {
@@ -99,7 +100,7 @@ pub fn generate(
         let tokens = [token];
         let positions = [pos];
 
-        transformer(&mut raw_logits, &tokens, &positions, &mut state, model.weights);
+        transformer(&mut raw_logits, &tokens, &positions, &mut state, model.weights());
         let logits = &mut raw_logits[0];
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
@@ -136,15 +137,6 @@ pub fn generate(
         outputs.push(token);
         let l = outputs.len();
 
-        // Heuristic stopping criteria.
-        if l > 6
-            && outputs[l - 1] == RET
-            && outputs[l - 2] == RET
-            && outputs[l - 3] == RET
-            && outputs[l - 4] == RET
-        {
-            break;
-        }
         pos += 1;
     }
 

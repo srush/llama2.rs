@@ -37,6 +37,12 @@ fn main() {
         println!("cargo:rustc-cfg=quant=\"no\"");
     }
 
+    if cfg!(feature="gpu") {
+        println!("cargo:rustc-cfg=gpu=\"yes\"");
+    } else {
+        println!("cargo:rustc-cfg=gpu=\"no\"");
+    }
+
     let mut rustflags = [
         "-C target-cpu=native",
         "-C link-args=-Wl,-zstack-size=419430400"

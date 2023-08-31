@@ -13,11 +13,6 @@ rayon = "1.5"
 pyo3 = { version = "0.19.0", optional = true}
 half = "2.3.1"
 rand = "0.8.5"
-half = "2.3.1"
-
-[[bin]]
-name = "check"
-path = "src/gptq_cuda2.rs"
 
 [profile.release]
 debug = true
@@ -42,9 +37,13 @@ group_32 = []
 group_64 = []
 group_128 = []
 
+# Use gpu
+gpu = []
+
 # currently enables Q_4 quantization
 quantized = []
 
-default = ["13B", "group_128", "quantized"]
+default = ["13B", "group_128", "quantized", "gpu"]
 model_size = []
 python = ["pyo3"]
+
