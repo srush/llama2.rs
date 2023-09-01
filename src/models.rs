@@ -102,6 +102,7 @@ mod model {
     // GROUPS = IN / GROUPSIZE
     // ING = IN / 32 * BITS
     // OUTG = OUT / 32 * BITS
+    // INX8 = IN / 8
     //
     // Rust Note: When there are constant int arith this won't be needed.
 
@@ -118,9 +119,11 @@ mod model {
     const DIM_G: usize = bit_div(DIM);
     const KV_DIM_G: usize = bit_div(KV_DIM);
     const HDIM_G: usize = bit_div(HIDDEN_DIM);
+    const DIM_DIV_8: usize = int_div_up(DIM, 8);
+    const HIDDEN_DIM_DIV_8: usize = int_div_up(HIDDEN_DIM, 8);
 
-    type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
-    type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
+    type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G, DIM_DIV_8>; N_LAYERS];
+    type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G, DIM_DIV_8>; N_LAYERS];
 
     #[repr(C)]
     #[cfg_attr(feature = "python", pyclass)]
@@ -141,9 +144,9 @@ mod model {
         pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
 
         // weights for ffn
-        pub w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
-        pub w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
-        pub w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
+        pub w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G, DIM_DIV_8>; N_LAYERS], // (layer, hidden_dim, dim)
+        pub w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G, HIDDEN_DIM_DIV_8>; N_LAYERS], // (layer, dim, hidden_dim)
+        pub w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G, DIM_DIV_8>; N_LAYERS], // (layer, hidden_dim, dim)
 
         // final rmsnorm
         pub rms_final_weight: [f32; DIM], // (dim,)

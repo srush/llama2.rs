@@ -11,6 +11,7 @@ pub struct QLinear<
     const GROUPS: usize,
     const ING: usize,
     const OUTG: usize,
+    const INX8: usize,
 > {
     // The quantized weights
     qweight: [[i32; ING]; OUT],
@@ -28,11 +29,13 @@ impl<
         const GROUPS: usize,
         const ING: usize,
         const OUTG: usize,
-    > QLinear<IN, OUT, GROUPS, ING, OUTG>
+        const INX8: usize,
+    > QLinear<IN, OUT, GROUPS, ING, OUTG, INX8>
 {
     pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) {
         assert_eq!(ING, IN / 32 * BITS);
         assert_eq!(OUTG, OUT / 32 * BITS);
+        assert_eq!(IN, INX8 * 8);
 
         // Transpose the output.
         let mut xout_temp = [[0.0; B]; OUT];
@@ -42,7 +45,7 @@ impl<
             }
         }
         let z = f32x8::splat(0.0);
-        // This should be IN / 8 but rust can't handle this statically.
+
         let mut x_temp1 = [[0.0; IN]; B];
 
         // Remap the input for ACT_ORDER=True
@@ -53,8 +56,8 @@ impl<
         }
 
         // Transpose the input.
-        let mut x_temp = [[z; B]; IN];
-        for i in 0..IN / 8 {
+        let mut x_temp = [[z; B]; INX8];
+        for i in 0..INX8 {
             for j in 0..B {
                 x_temp[i][j] = f32x8::from_slice(&x_temp1[j][i * 8..][..8]);
             }
