@@ -10,6 +10,8 @@ clap = { version = "4.3.23", features = ["derive"] }
 memmap2 = "0.7"
 rayon = "1.5"
 pyo3 = { version = "0.19.0", optional = true}
+half = { version = "2.3.1", optional = true}
+cust = { version = "0.3.2", optional = true}
 
 [profile.release]
 debug = true
@@ -34,9 +36,14 @@ group_32 = []
 group_64 = []
 group_128 = []
 
+# Use gpu
+gpu = ["cust", "half"]
+
 # currently enables Q_4 quantization
 quantized = []
 
-default = ["13B", "group_128", "quantized"]
+
+default = []
 model_size = []
 python = ["pyo3"]
+

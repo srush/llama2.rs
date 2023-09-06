@@ -1,11 +1,30 @@
 // Constant sizes of the model are stored in a different file.
 use crate::constants::{
-    ATTN_GROUPS, BITS, DIM, GROUPSIZE, HEAD_SIZE, HIDDEN_DIM, KV_DIM, N_HEADS, N_KV_HEADS,
-    N_LAYERS, SEQ_LEN, VOCAB_SIZE,
+    ATTN_GROUPS, DIM, HEAD_SIZE, HIDDEN_DIM, KV_DIM, N_HEADS, N_KV_HEADS, N_LAYERS, SEQ_LEN,
+    VOCAB_SIZE,
 };
-#[cfg(feature = "python")]
-use pyo3::pyclass;
+
+#[cfg(gpu = "yes")]
+mod x {
+    use crate::gptq_cuda::QTransformerWeightsCuda;
+    pub type TWeights = QTransformerWeightsCuda;
+}
+
+#[cfg(all(quant = "Q_4", gpu = "no"))]
+mod x {
+    use crate::gptq::QTransformerWeights;
+    pub type TWeights = QTransformerWeights;
+}
+
+#[cfg(quant = "no")]
+mod x {
+    // Turn off GPT-Q Quantization.
+    use crate::model::TransformerWeights;
+    pub type TWeights = TransformerWeights;
+}
+
 use rayon::prelude::*;
+pub use x::TWeights;
 
 pub struct RunState {
     // kv cache
@@ -21,145 +40,6 @@ impl RunState {
         })
     }
 }
-
-/// A dense linear layer.
-///
-/// Rust Notes:
-/// 1) We use IN and OUT as generic constrants for safety
-/// 2) We need repr(c) becuase we are memory mapping from a C file.
-#[repr(C)]
-pub struct Linear<const IN: usize, const OUT: usize> {
-    w: [[f32; IN]; OUT], // Storage is as a dense matrix.
-}
-
-impl<const IN: usize, const OUT: usize> Linear<IN, OUT> {
-    /// W (d,n) @ x (n,) -> xout (d,)
-    // by far the most amount of time is spent inside this little function
-    /// Rust note: par_iter_mut is from the RAYON library. It run in parallel.
-    /// Rust note: x is passed by reference, xout as mutiple reference.    
-    pub fn matvec<const B: usize>(self: &Self, xout: &mut [[f32; OUT]; B], x: &[[f32; IN]; B]) {
-        for (xout, x) in xout.iter_mut().zip(x) {
-            xout.par_iter_mut().enumerate().for_each(|(i, v)| {
-                *v = self.w[i]
-                    .iter()
-                    .zip(x.iter())
-                    .fold(0.0, |acc, (&_w, &_x)| acc + _w * _x);
-            });
-        }
-    }
-}
-
-/// This is the main standard Transformer model
-/// This is generally slower, but included for sanity and debugging.
-#[repr(C)]
-#[allow(dead_code)]
-pub struct TransformerWeights {
-    pub rms_eps: f32,
-
-    // token embedding table
-    pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE],
-
-    // weights for rmsnorms
-    pub rms_att_weight: [[f32; DIM]; N_LAYERS],
-
-    // weights for matmuls
-    pub wq: [Linear<DIM, DIM>; N_LAYERS],
-    pub wk: [Linear<DIM, KV_DIM>; N_LAYERS],
-    pub wv: [Linear<DIM, KV_DIM>; N_LAYERS],
-    pub wo: [Linear<DIM, DIM>; N_LAYERS],
-
-    pub rms_ffn_weight: [[f32; DIM]; N_LAYERS],
-    // weights for ffn
-    pub w1: [Linear<DIM, HIDDEN_DIM>; N_LAYERS],
-    pub w2: [Linear<HIDDEN_DIM, DIM>; N_LAYERS],
-    pub w3: [Linear<DIM, HIDDEN_DIM>; N_LAYERS],
-    // final rmsnorm
-    pub rms_final_weight: [f32; DIM], // (dim,)
-
-    // Deprecated. freq_cis for RoPE relatively positional embeddings
-    pub _freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
-    pub _freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
-
-    // Classifier weights for the logits, on the last layer
-    pub wcls: Linear<DIM, VOCAB_SIZE>, // (dim,)
-}
-
-#[cfg(quant = "no")]
-mod model {
-    // Turn off GPT-Q Quantization.
-    pub type TWeights = super::TransformerWeights;
-}
-
-#[cfg(quant = "Q_4")]
-mod model {
-    use super::*;
-    use crate::gptq::QLinear;
-
-    // QLinear is a quantized linear layer.
-    // Instead of Linear<IN, OUT> you need to pass in
-    // constructed values.
-    // QLinear<IN, OUT, GROUPS, ING, OUTG> where
-    // GROUPS = IN / GROUPSIZE
-    // ING = IN / 32 * BITS
-    // OUTG = OUT / 32 * BITS
-    //
-    // Rust Note: When there are constant int arith this won't be needed.
-
-    /// Code for standard non-quantized matrix vector models.
-    const fn int_div_up(x: usize, y: usize) -> usize {
-        x / y + if x % y == 0 { 0 } else { 1 }
-    }
-    const fn bit_div(x: usize) -> usize {
-        x / 32 * BITS
-    }
-
-    const DIM_GROUPS: usize = int_div_up(DIM, GROUPSIZE);
-    const HDIM_GROUPS: usize = int_div_up(HIDDEN_DIM, GROUPSIZE);
-    const DIM_G: usize = bit_div(DIM);
-    const KV_DIM_G: usize = bit_div(KV_DIM);
-    const HDIM_G: usize = bit_div(HIDDEN_DIM);
-
-    type Att = [QLinear<DIM, DIM, DIM_GROUPS, DIM_G, DIM_G>; N_LAYERS];
-    type AttKV = [QLinear<DIM, KV_DIM, DIM_GROUPS, DIM_G, KV_DIM_G>; N_LAYERS];
-
-    #[repr(C)]
-    #[cfg_attr(feature = "python", pyclass)]
-    pub struct QTransformerWeights {
-        pub rms_eps: f32,
-
-        // token embedding table
-        pub token_embedding_table: [[f32; DIM]; VOCAB_SIZE], // (vocab_size, dim)
-        // weights for rmsnorms
-        pub rms_att_weight: [[f32; DIM]; N_LAYERS], // (layer, dim) rmsnorm weights
-
-        // weights for matmuls
-        pub wq: Att,   // (layer, dim, dim)
-        pub wk: AttKV, // (layer, dim, dim)
-        pub wv: AttKV, // (layer, dim, dim)
-        pub wo: Att,   // (layer, dim, dim)
-
-        pub rms_ffn_weight: [[f32; DIM]; N_LAYERS], // (layer, dim)
-
-        // weights for ffn
-        pub w1: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
-        pub w2: [QLinear<HIDDEN_DIM, DIM, HDIM_GROUPS, HDIM_G, DIM_G>; N_LAYERS], // (layer, dim, hidden_dim)
-        pub w3: [QLinear<DIM, HIDDEN_DIM, DIM_GROUPS, DIM_G, HDIM_G>; N_LAYERS], // (layer, hidden_dim, dim)
-
-        // final rmsnorm
-        pub rms_final_weight: [f32; DIM], // (dim,)
-
-        // Depreacted
-        pub _freq_cis_real: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
-        pub _freq_cis_imag: [[f32; DIM / N_HEADS / 2]; SEQ_LEN],
-
-        // Classifier weights for the logits, on the last layer
-        pub wcls: super::Linear<DIM, VOCAB_SIZE>, // (dim,)
-    }
-
-    pub type TWeights = QTransformerWeights;
-}
-
-pub use model::TWeights;
 
 // ----------------------------------------------------------------------------
 // neural net blocks
@@ -414,5 +294,5 @@ pub fn transformer<const B: usize>(
         // classifier into logits
         w.wcls.matvec(logits, &fin[..1].try_into().expect("size"));
         //println!("logits {:?}", logits);
-    }
+    };
 }

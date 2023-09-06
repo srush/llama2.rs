@@ -6,9 +6,9 @@
 //! You can select which is used with --cfg model_size=70B.
 
 use llama2_rs::inference::generate;
-use llama2_rs::LlamaModel;
 use llama2_rs::tokenizer::Tokenizer;
 use llama2_rs::util::Random;
+use llama2_rs::LlamaModel;
 
 use clap::Parser;
 
@@ -55,7 +55,7 @@ fn main() {
         args.steps,
         &mut random,
         args.temperature,
-        true
+        true,
     );
 
     // report achieved tok/s

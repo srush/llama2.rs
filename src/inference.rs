@@ -1,12 +1,13 @@
 #[cfg(feature = "python")]
 use pyo3::pyfunction;
 
-use crate::models::{RunState, TWeights, transformer, softmax};
-use crate::tokenizer::{Tokenizer, START, Token, RET};
 use crate::constants::VOCAB_SIZE;
-use crate::util::{Random, time_in_ms, argmax};
-use crate::LlamaModel;
+use crate::models::TWeights;
+use crate::models::{softmax, transformer, RunState};
+use crate::tokenizer::{Token, Tokenizer, START};
+use crate::util::{argmax, time_in_ms, Random};
 use crate::util::{get_token, print_token};
+use crate::LlamaModel;
 
 /// For the prompt, fills the caches by running transformer.
 /// While not strictly necessary, this can lead to faster
@@ -18,7 +19,7 @@ pub fn prefill<const A: usize>(
     prompt_tokens: &Vec<usize>,
     tokenizer: &Tokenizer,
     weights: &TWeights,
-    print_tokens: bool
+    print_tokens: bool,
 ) {
     while *pos + A < prompt_tokens.len() {
         let mut tokens = [0; A];
@@ -52,7 +53,7 @@ pub fn generate(
     steps: usize,
     random: &mut Random,
     temperature: f32,
-    print_tokens: bool
+    print_tokens: bool,
 ) -> (i64, Vec<String>) {
     // create and init the application RunState
     let mut state: Box<RunState> = RunState::new();
@@ -74,19 +75,62 @@ pub fn generate(
 
     // Do a little backoff to handle different sizes.This costs us compilation time,
     // But allows us to compile versions of with the longest lnength prefill possible.
-    prefill::<64>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<32>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<16>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<8>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<4>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-    prefill::<2>(&mut pos, &mut state, &prompt_tokens, tokenizer, model.weights, print_tokens);
-
+    if model.prefill() {
+        prefill::<64>(
+            &mut pos,
+            &mut state,
+            &prompt_tokens,
+            tokenizer,
+            model.weights(),
+            print_tokens,
+        );
+        prefill::<32>(
+            &mut pos,
+            &mut state,
+            &prompt_tokens,
+            tokenizer,
+            model.weights(),
+            print_tokens,
+        );
+        prefill::<16>(
+            &mut pos,
+            &mut state,
+            &prompt_tokens,
+            tokenizer,
+            model.weights(),
+            print_tokens,
+        );
+        prefill::<8>(
+            &mut pos,
+            &mut state,
+            &prompt_tokens,
+            tokenizer,
+            model.weights(),
+            print_tokens,
+        );
+        prefill::<4>(
+            &mut pos,
+            &mut state,
+            &prompt_tokens,
+            tokenizer,
+            model.weights(),
+            print_tokens,
+        );
+        prefill::<2>(
+            &mut pos,
+            &mut state,
+            &prompt_tokens,
+            tokenizer,
+            model.weights(),
+            print_tokens,
+        );
+    }
     let mut token: Token = if pos == 0 {
         START
     } else {
         prompt_tokens[pos - 1]
     }; // init with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
-    
+
     if print_tokens {
         let token_str = get_token(tokenizer, token, token);
         print_token(token_str);
@@ -99,7 +143,13 @@ pub fn generate(
         let tokens = [token];
         let positions = [pos];
 
-        transformer(&mut raw_logits, &tokens, &positions, &mut state, model.weights);
+        transformer(
+            &mut raw_logits,
+            &tokens,
+            &positions,
+            &mut state,
+            model.weights(),
+        );
         let logits = &mut raw_logits[0];
         if pos < prompt_tokens.len() {
             // if we are still processing the input prompt, force the next prompt token
@@ -122,7 +172,7 @@ pub fn generate(
                 next = random.sample(logits, VOCAB_SIZE);
             }
         };
-        
+
         // following BOS token (1), sentencepiece decoder strips any leading whitespace (see PR #89)
         //println!("{} {}", next, state.logits[next]);
         let token_str = get_token(tokenizer, token, next);
@@ -134,17 +184,8 @@ pub fn generate(
         // advance forward
         token = next;
         outputs.push(token);
-        let l = outputs.len();
+        let _l = outputs.len();
 
-        // Heuristic stopping criteria.
-        if l > 6
-            && outputs[l - 1] == RET
-            && outputs[l - 2] == RET
-            && outputs[l - 3] == RET
-            && outputs[l - 4] == RET
-        {
-            break;
-        }
         pos += 1;
     }
 
