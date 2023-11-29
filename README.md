@@ -27,6 +27,8 @@ To build, you'll need the nightly toolchain, which is used by default:
 
 You can load models from the Hugging Face hub. For example this creates a version of a [70B quantized](https://huggingface.co/TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ)) model with 4 bit quant and 64 sized groups:
 
+Make sure you pick a GPTQ model in the GGUF format. Take note of the parameter size, size and if the model is quantized or not.
+
 ```
 > pip install -r requirements.export.txt
 > python export.py l70b.act64.bin TheBloke/llama-2-70b-Guanaco-QLoRA-GPTQ gptq-4bit-64g-actorder_True
@@ -48,6 +50,7 @@ Here's a run of 13B quantized:
 
 ```bash
 > cargo run --release --features 13B,group_128,quantized -- -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+> cargo run --release --features 13B,group_128,quantized -- -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
 Hello to all the cool people out there who are reading this. I hope you are having a great day. I am here
 achieved tok/s: 5.1588936
 ```
@@ -56,16 +59,21 @@ Here's a run of 7B quantized:
 
 ```bash
 cargo run --release --features 7B,group_128,quantized -- -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+cargo run --release --features 7B,group_128,quantized -- -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
 > Hello to all the cool people out there who are reading this. I am a newbie here and I am looking for some
 achieved tok/s: 9.048136
 ```
 
 ### Python
 
-To run in Python, you need to first compile from the main directory with the python flag. 
+To run in Python, you need to first compile from the main directory with the python flag.
+Before you build and run the python model we need to set up the build file to match the model.
+Please adjsut the `features` parameter e.g:
+
+`features = ["pyo3/extension-module", "python", "7B", "group_128", "quantized"]`
 
 ```bash
-cargo build --release --features 7B,group_128,quantized,python
+cargo build --release --features 7B,group_128,python,quantized
 pip install .
 ```
 

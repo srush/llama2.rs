@@ -4,7 +4,7 @@ use crate::model::Linear;
 use rayon::prelude::*;
 /// Code for quantized SIMD implementation.
 use std::simd::{f32x8, i32x8, SimdFloat, SimdInt};
-
+use pyo3::pyclass;
 // QLinear is a quantized linear layer.
 // Instead of Linear<IN, OUT> you need to pass in
 // constructed values.
