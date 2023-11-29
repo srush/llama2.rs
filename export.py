@@ -133,7 +133,6 @@ def main(output_path: pathlib.Path, model_name: str, revision: str, max_vocab_si
         revision=revision,
         use_safetensors=True,
         trust_remote_code=True,
-        device="cpu",
         inject_fused_attention=False,
         inject_fused_mlp=False,
         use_triton=False,

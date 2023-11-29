@@ -37,7 +37,7 @@ The library needs to be *recompiled* to match the model. You can do this with ca
 To run:
 
 ```
-> cargo run --release --features 70B,group_64 -- -c llama2-70b-q.bin -t 0.0 -s 11 -p "The only thing"                                                                                                                                 
+> cargo run --release --features 70B,group_64,quantized -- -c llama2-70b-q.bin -t 0.0 -s 11 -p "The only thing"                                                                                                                                 
 The only thing that I can think of is that the          
 achieved tok/s: 0.89155835
 ```
@@ -47,7 +47,7 @@ Honestly, not so bad for running on my GPU machine, significantly faster than ll
 Here's a run of 13B quantized:
 
 ```bash
-> cargo run --release --features 13B,group_128 -- -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+> cargo run --release --features 13B,group_128,quantized -- -c l13orca.act.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
 Hello to all the cool people out there who are reading this. I hope you are having a great day. I am here
 achieved tok/s: 5.1588936
 ```
@@ -55,7 +55,7 @@ achieved tok/s: 5.1588936
 Here's a run of 7B quantized:
 
 ```bash
-cargo run --release --features 7B,group_128 -- -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
+cargo run --release --features 7B,group_128,quantized -- -c l7.ack.bin -t 0.0 -s 25 -p "Hello to all the cool people out there who "
 > Hello to all the cool people out there who are reading this. I am a newbie here and I am looking for some
 achieved tok/s: 9.048136
 ```
@@ -65,7 +65,7 @@ achieved tok/s: 9.048136
 To run in Python, you need to first compile from the main directory with the python flag. 
 
 ```bash
-cargo build --release --features 7B,group_128,python
+cargo build --release --features 7B,group_128,quantized,python
 pip install .
 ```
 
