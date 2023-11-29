@@ -1,4 +1,4 @@
 torch
 transformers
-auto-gptq
+auto-gptq==0.3
 click
