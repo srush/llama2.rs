@@ -20,6 +20,6 @@ dependencies = [
 # see https://github.com/PyO3/maturin/tree/main/test-crates/pyo3-mixed-py-subdir
 # for the directory structure
 [tool.maturin]
-features = ["pyo3/extension-module", "python"]
+features = ["pyo3/extension-module", "python", "7B", "group_128", "quantized"]
 python-source = "python"
 module-name = "llama2_rs.llama2_rs_pylib"

@@ -67,7 +67,7 @@ mod llama_model {
 #[cfg(gpu = "no")]
 mod llama_model {
     use crate::models::TWeights;
-
+    use pyo3::pyclass;
     #[allow(dead_code)]
     #[cfg_attr(feature = "python", pyclass)]
     pub struct LlamaModel {
